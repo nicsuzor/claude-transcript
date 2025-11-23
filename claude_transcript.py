@@ -42,7 +42,8 @@ class Entry:
         self.content = data.get('content', {})
         self.is_sidechain = data.get('isSidechain', False)
         self.is_meta = data.get('isMeta', False)
-        
+        self.tool_use_result = data.get('toolUseResult', {})
+
         # Parse timestamp
         self.timestamp = None
         if 'timestamp' in data:
@@ -95,8 +96,8 @@ class ConversationTurn:
 class SessionProcessor:
     """Processes JSONL sessions into markdown transcripts with exact same logic as backend"""
     
-    def parse_jsonl(self, file_path: str) -> Tuple[SessionSummary, List[Entry]]:
-        """Parse JSONL file into session summary and entries"""
+    def parse_jsonl(self, file_path: str) -> Tuple[SessionSummary, List[Entry], Dict[str, List[Entry]]]:
+        """Parse JSONL file into session summary and entries, plus agent entries"""
         entries = []
         session_summary = None
         session_uuid = Path(file_path).stem
@@ -124,10 +125,41 @@ class SessionProcessor:
         # Create default summary if none found
         if not session_summary:
             session_summary = SessionSummary(uuid=session_uuid)
-        
-        return session_summary, entries
-    
-    def group_entries_into_turns(self, entries: List[Entry]) -> List[ConversationTurn]:
+
+        # Load agent entries from agent-*.jsonl files
+        agent_entries = self._load_agent_files(file_path)
+
+        return session_summary, entries, agent_entries
+
+    def _load_agent_files(self, main_file_path: str) -> Dict[str, List[Entry]]:
+        """Load all agent-*.jsonl files in the same directory"""
+        agent_entries: Dict[str, List[Entry]] = {}
+
+        main_path = Path(main_file_path)
+        session_dir = main_path.parent
+
+        for agent_file in session_dir.glob("agent-*.jsonl"):
+            agent_id = agent_file.stem.replace("agent-", "")
+            entries = []
+
+            with open(agent_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        entry = Entry(data)
+                        entries.append(entry)
+                    except json.JSONDecodeError:
+                        continue
+
+            if entries:
+                agent_entries[agent_id] = entries
+
+        return agent_entries
+
+    def group_entries_into_turns(self, entries: List[Entry], agent_entries: Optional[Dict[str, List[Entry]]] = None) -> List[ConversationTurn]:
         """Group JSONL entries into conversational turns, correlating sidechains with main thread"""
         # First, separate main thread from sidechains and filter out meta entries
         main_entries = [e for e in entries if not e.is_sidechain and e.type != 'summary' and not e.is_meta]
@@ -199,10 +231,15 @@ class SessionProcessor:
                                 tool_id = block.get('id')
                                 tool_name = block.get('name', '')
                                 if tool_name == 'Task' and tool_id:
-                                    # Look for related sidechain
-                                    related_sidechain = self._find_related_sidechain(entry, sidechain_groups)
-                                    if related_sidechain:
-                                        tool_item['sidechain_summary'] = self._summarize_sidechain(related_sidechain)
+                                    # First try: explicit agentId from tool result
+                                    agent_id = self._extract_agent_id_from_result(tool_id, entries)
+                                    if agent_id and agent_entries and agent_id in agent_entries:
+                                        tool_item['sidechain_summary'] = self._summarize_sidechain(agent_entries[agent_id])
+                                    else:
+                                        # Fallback: existing timestamp-based sidechain lookup
+                                        related_sidechain = self._find_related_sidechain(entry, sidechain_groups)
+                                        if related_sidechain:
+                                            tool_item['sidechain_summary'] = self._summarize_sidechain(related_sidechain)
                                 
                                 current_turn['assistant_sequence'].append(tool_item)
                     else:
@@ -256,7 +293,8 @@ class SessionProcessor:
         
         return conversation_turns
     
-    def format_session_as_markdown(self, session: SessionSummary, entries: List[Entry]) -> str:
+    def format_session_as_markdown(self, session: SessionSummary, entries: List[Entry],
+                                     agent_entries: Optional[Dict[str, List[Entry]]] = None) -> str:
         """Format session entries as readable markdown with proper turn structure"""
         session_uuid = session.uuid
         details = session.details or {}
@@ -277,7 +315,7 @@ class SessionProcessor:
         markdown += "---\n\n"
         
         # Group entries into conversational turns
-        turns = self.group_entries_into_turns(entries)
+        turns = self.group_entries_into_turns(entries, agent_entries)
         
         for i, turn in enumerate(turns):
             # Format turn header (simple)
@@ -416,7 +454,27 @@ class SessionProcessor:
                 summary_parts.append(f"... and {len(file_operations) - 3} more")
         
         return "; ".join(summary_parts) if summary_parts else "Parallel task execution"
-    
+
+    def _extract_agent_id_from_result(self, tool_id: str, all_entries: List[Entry]) -> Optional[str]:
+        """Find the agentId from the tool result corresponding to this tool use"""
+        for entry in all_entries:
+            if entry.type != 'user':
+                continue
+
+            message = entry.message or {}
+            content = message.get('content', [])
+            if not isinstance(content, list):
+                continue
+
+            for block in content:
+                if isinstance(block, dict):
+                    if (block.get('type') == 'tool_result' and
+                        block.get('tool_use_id') == tool_id):
+                        # Found it - get agentId from tool_use_result
+                        return entry.tool_use_result.get('agentId')
+
+        return None
+
     def _extract_user_content(self, entry: Entry) -> str:
         """Extract clean user content from entry"""
         message = entry.message or {}
@@ -701,12 +759,12 @@ Examples:
     
     try:
         print(f"📝 Processing session: {jsonl_path}")
-        session_summary, entries = processor.parse_jsonl(str(jsonl_path))
+        session_summary, entries, agent_entries = processor.parse_jsonl(str(jsonl_path))
         
         print(f"📊 Found {len(entries)} entries")
         
         # Generate markdown
-        markdown = processor.format_session_as_markdown(session_summary, entries)
+        markdown = processor.format_session_as_markdown(session_summary, entries, agent_entries)
         
         # Write to file
         with open(output_path, 'w', encoding='utf-8') as f:
