@@ -27,7 +27,7 @@ import json
 import subprocess
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -375,7 +375,7 @@ class SessionProcessor:
         
         # Check the same minute and next minute
         for time_offset in [0, 1]:
-            check_time = main_minute.replace(minute=main_minute.minute + time_offset)
+            check_time = main_minute + timedelta(minutes=time_offset)
             if check_time in sidechain_groups:
                 return sidechain_groups[check_time]
         
