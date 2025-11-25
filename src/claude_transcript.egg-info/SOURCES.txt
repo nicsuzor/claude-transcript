@@ -8,3 +8,4 @@ src/claude_transcript.egg-info/SOURCES.txt
 src/claude_transcript.egg-info/dependency_links.txt
 src/claude_transcript.egg-info/entry_points.txt
 src/claude_transcript.egg-info/top_level.txt
+tests/test_hook_context.py

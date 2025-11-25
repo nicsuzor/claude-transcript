@@ -589,7 +589,8 @@ class SessionProcessor:
                     if (block.get('type') == 'tool_result' and
                         block.get('tool_use_id') == tool_id):
                         # Found it - get agentId from tool_use_result
-                        return entry.tool_use_result.get('agentId')
+                        if isinstance(entry.tool_use_result, dict):
+                            return entry.tool_use_result.get('agentId')
 
         return None
 

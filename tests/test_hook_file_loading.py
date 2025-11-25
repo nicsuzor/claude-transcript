@@ -253,3 +253,199 @@ def test_load_hook_entries_extracts_additionalContext(claude_transcript_module):
         second_entry = entries[1]
         assert second_entry.type == "system_reminder"
         assert "Session initialization" in second_entry.additional_context
+
+
+def test_parse_jsonl_integrates_hook_entries(claude_transcript_module):
+    """Test that parse_jsonl() discovers and loads hook entries.
+
+    Integration test workflow:
+    1. Creates a session JSONL file
+    2. Creates a hook JSONL file with transcript_path and hookSpecificOutput
+    3. Calls parse_jsonl(session_path)
+    4. Verifies returned entries include hook entries (type='system_reminder')
+    5. Verifies hook additionalContext is accessible
+
+    Expected to fail because parse_jsonl() doesn't call _find_hook_file()
+    or _load_hook_entries() yet.
+    """
+    # Arrange: Create session file + hook file
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session_path = Path(tmpdir) / "session-integration.jsonl"
+        hook_dir = Path(tmpdir) / "hooks"
+        hook_dir.mkdir()
+        hook_path = hook_dir / "session-hooks.jsonl"
+
+        # Write session file
+        session_entries = [
+            {
+                "type": "summary",
+                "uuid": "integration-test",
+                "content": {"summary": "Integration test session"}
+            },
+            {
+                "type": "user",
+                "uuid": "user-001",
+                "timestamp": "2025-11-25T10:00:00Z",
+                "message": {
+                    "content": [{"type": "text", "text": "User message"}]
+                }
+            },
+            {
+                "type": "assistant",
+                "uuid": "assistant-001",
+                "timestamp": "2025-11-25T10:00:05Z",
+                "message": {
+                    "content": [{"type": "text", "text": "Assistant response"}]
+                }
+            }
+        ]
+        with open(session_path, "w", encoding="utf-8") as f:
+            for entry in session_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        # Write hook file with transcript_path and hookSpecificOutput
+        hook_entries = [
+            {
+                "hook_event": "SessionStart",
+                "logged_at": "2025-11-25T09:55:00.000000+00:00",
+                "session_id": "integration-test",
+                "transcript_path": str(session_path),  # Required for discovery
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": "Hook context for integration test"
+                }
+            },
+            {
+                "hook_event": "UserPromptSubmit",
+                "logged_at": "2025-11-25T10:00:01.000000+00:00",
+                "session_id": "integration-test",
+                "transcript_path": str(session_path),
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": "**CRITICAL**: Prompt router context"
+                }
+            }
+        ]
+        with open(hook_path, "w", encoding="utf-8") as f:
+            for entry in hook_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        # Act: Call parse_jsonl on session file
+        processor = claude_transcript_module.SessionProcessor()
+        session, entries, agents = processor.parse_jsonl(str(session_path))
+
+        # Assert: Hook entries should be included in entries list
+        hook_entries_in_result = [e for e in entries if e.type == 'system_reminder']
+        assert len(hook_entries_in_result) > 0, (
+            "Expected parse_jsonl() to include hook entries with type='system_reminder', "
+            "but no such entries were found. This fails because parse_jsonl() doesn't "
+            "call _find_hook_file() or _load_hook_entries() yet."
+        )
+
+        # Verify hook content is accessible
+        assert any(
+            "hook context" in e.additional_context.lower()
+            for e in hook_entries_in_result
+        ), (
+            "Expected at least one hook entry to contain 'hook context' in additional_context"
+        )
+
+        # Verify both hook entries were loaded
+        assert len(hook_entries_in_result) >= 2, (
+            f"Expected at least 2 hook entries, got {len(hook_entries_in_result)}"
+        )
+
+
+def test_format_displays_hook_event_name(claude_transcript_module):
+    """Test that format_session_as_markdown displays hookEventName in heading.
+
+    Integration test workflow:
+    1. Creates a session JSONL file
+    2. Creates a hook JSONL file with hookSpecificOutput.hookEventName
+    3. Calls parse_jsonl() to load both session and hook entries
+    4. Calls format_session_as_markdown() to generate markdown
+    5. Verifies markdown output includes hookEventName in heading
+
+    Expected to fail because current formatting (lines 424-425) only shows
+    generic "### Hook Context" without extracting and displaying hookEventName.
+    """
+    # Arrange: Create session file + hook file with hookEventName
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session_path = Path(tmpdir) / "session-format-test.jsonl"
+        hook_dir = Path(tmpdir) / "hooks"
+        hook_dir.mkdir()
+        hook_path = hook_dir / "format-test-hooks.jsonl"
+
+        # Write session file
+        session_entries = [
+            {
+                "type": "summary",
+                "uuid": "format-test-123",
+                "content": {"summary": "Test session for format display"}
+            },
+            {
+                "type": "user",
+                "uuid": "user-001",
+                "timestamp": "2025-11-25T10:00:00Z",
+                "message": {
+                    "content": [{"type": "text", "text": "Test user message"}]
+                }
+            }
+        ]
+        with open(session_path, "w", encoding="utf-8") as f:
+            for entry in session_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        # Write hook file with hookEventName
+        hook_entries = [
+            {
+                "hook_event": "UserPromptSubmit",
+                "logged_at": "2025-11-25T10:00:01.000000+00:00",
+                "session_id": "format-test-123",
+                "transcript_path": str(session_path),
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": "**CRITICAL**: Hook context for UserPromptSubmit event"
+                }
+            },
+            {
+                "hook_event": "SessionStart",
+                "logged_at": "2025-11-25T09:55:00.000000+00:00",
+                "session_id": "format-test-123",
+                "transcript_path": str(session_path),
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": "Session initialization context"
+                }
+            }
+        ]
+        with open(hook_path, "w", encoding="utf-8") as f:
+            for entry in hook_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        # Act: Parse session and format as markdown
+        processor = claude_transcript_module.SessionProcessor()
+        session, entries, agents = processor.parse_jsonl(str(session_path))
+        markdown = processor.format_session_as_markdown(session, entries, agents)
+
+        # Assert: Hook event names should appear in markdown headings
+        # Check for UserPromptSubmit in heading
+        assert "UserPromptSubmit" in markdown, (
+            f"Expected 'UserPromptSubmit' to appear in markdown output. "
+            f"Current format only shows generic '### Hook Context' without hookEventName. "
+            f"Got markdown:\n{markdown}"
+        )
+
+        # Check for SessionStart in heading
+        assert "SessionStart" in markdown, (
+            f"Expected 'SessionStart' to appear in markdown output. "
+            f"Got markdown:\n{markdown}"
+        )
+
+        # Verify hook context content is still present
+        assert "CRITICAL" in markdown, (
+            "Expected hook additionalContext to still be present in markdown"
+        )
+        assert "Session initialization" in markdown, (
+            "Expected SessionStart hook context to be present in markdown"
+        )
