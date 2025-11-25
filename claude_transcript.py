@@ -193,8 +193,9 @@ class SessionProcessor:
             Path to matching hook file, or None if not found
         """
         session_path = Path(session_file_path)
-        session_dir = session_path.parent
-        hook_dir = session_dir / "hooks"
+
+        # Hook files are stored in ~/.cache/aops/sessions/
+        hook_dir = Path.home() / ".cache" / "aops" / "sessions"
 
         # Hook directory must exist
         if not hook_dir.exists():
