@@ -44,6 +44,17 @@ class Entry:
         self.is_meta = data.get('isMeta', False)
         self.tool_use_result = data.get('toolUseResult', {})
 
+        # Extract additionalContext from system_reminder entries
+        self.additional_context = None
+        if self.type == 'system_reminder':
+            # Try hookSpecificOutput first (real session format)
+            hook_output = data.get('hookSpecificOutput', {})
+            if isinstance(hook_output, dict) and hook_output.get('additionalContext'):
+                self.additional_context = hook_output.get('additionalContext', '')
+            # Fall back to content.additionalContext (test format)
+            elif isinstance(self.content, dict) and self.content.get('additionalContext'):
+                self.additional_context = self.content.get('additionalContext', '')
+
         # Parse timestamp
         self.timestamp = None
         if 'timestamp' in data:
@@ -159,10 +170,49 @@ class SessionProcessor:
 
         return agent_entries
 
+    def _find_hook_file(self, session_file_path: str) -> Optional[str]:
+        """Find hook file by searching for transcript_path match in hook JSONL files.
+
+        Args:
+            session_file_path: Path to the session JSONL file
+
+        Returns:
+            Path to matching hook file, or None if not found
+        """
+        session_path = Path(session_file_path)
+        session_dir = session_path.parent
+        hook_dir = session_dir / "hooks"
+
+        # Hook directory must exist
+        if not hook_dir.exists():
+            return None
+
+        # Search all *-hooks.jsonl files
+        for hook_file in hook_dir.glob("*-hooks.jsonl"):
+            try:
+                with open(hook_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            # Check if transcript_path field matches session file
+                            if 'transcript_path' not in data:
+                                continue
+                            if data['transcript_path'] == session_file_path:
+                                return str(hook_file)
+                        except json.JSONDecodeError:
+                            continue
+            except (OSError, IOError):
+                continue
+
+        return None
+
     def group_entries_into_turns(self, entries: List[Entry], agent_entries: Optional[Dict[str, List[Entry]]] = None) -> List[ConversationTurn]:
         """Group JSONL entries into conversational turns, correlating sidechains with main thread"""
         # First, separate main thread from sidechains and filter out meta entries
-        main_entries = [e for e in entries if not e.is_sidechain and e.type != 'summary' and not e.is_meta]
+        main_entries = [e for e in entries if not e.is_sidechain and e.type != 'summary' and not e.is_meta and e.type != 'system_reminder']
         sidechain_entries = [e for e in entries if e.is_sidechain]
         
         # Group sidechain entries by their conversation thread
@@ -298,22 +348,31 @@ class SessionProcessor:
         """Format session entries as readable markdown with proper turn structure"""
         session_uuid = session.uuid
         details = session.details or {}
-        
+
         # Header
         markdown = f"# Session Transcript: {session.summary}\n\n"
         markdown += f"**Session ID**: `{session_uuid}`  \n"
         markdown += f"**Created**: {details.get('created_at', session.created_at or 'Unknown')}  \n"
         markdown += f"**Type**: {session.artifact_type}  \n"
-        
+
         edited_files = details.get('edited_files', session.edited_files)
         if edited_files and isinstance(edited_files, list):
             files_str = ', '.join(edited_files)
         else:
             files_str = "None"
         markdown += f"**Files Modified**: {files_str}  \n\n"
-        
+
         markdown += "---\n\n"
-        
+
+        # Extract and include hook contexts from system_reminder entries
+        hook_contexts = [e.additional_context for e in entries
+                        if e.type == 'system_reminder' and e.additional_context and e.additional_context.strip()]
+
+        if hook_contexts:
+            for hook_context in hook_contexts:
+                markdown += f"### Hook Context\n\n{hook_context}\n\n"
+            markdown += "---\n\n"
+
         # Group entries into conversational turns
         turns = self.group_entries_into_turns(entries, agent_entries)
         
