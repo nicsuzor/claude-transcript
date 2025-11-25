@@ -46,14 +46,18 @@ class Entry:
 
         # Extract additionalContext from system_reminder entries
         self.additional_context = None
+        self.hook_event_name = None
         if self.type == 'system_reminder':
             # Try hookSpecificOutput first (real session format)
             hook_output = data.get('hookSpecificOutput', {})
             if isinstance(hook_output, dict) and hook_output.get('additionalContext'):
                 self.additional_context = hook_output.get('additionalContext', '')
+                self.hook_event_name = hook_output.get('hookEventName')
             # Fall back to content.additionalContext (test format)
             elif isinstance(self.content, dict) and self.content.get('additionalContext'):
                 self.additional_context = self.content.get('additionalContext', '')
+                if isinstance(self.content, dict):
+                    self.hook_event_name = self.content.get('hookEventName')
 
         # Parse timestamp
         self.timestamp = None
@@ -417,12 +421,15 @@ class SessionProcessor:
         markdown += "---\n\n"
 
         # Extract and include hook contexts from system_reminder entries
-        hook_contexts = [e.additional_context for e in entries
-                        if e.type == 'system_reminder' and e.additional_context and e.additional_context.strip()]
+        hook_entries = [e for e in entries
+                       if e.type == 'system_reminder' and e.additional_context and e.additional_context.strip()]
 
-        if hook_contexts:
-            for hook_context in hook_contexts:
-                markdown += f"### Hook Context\n\n{hook_context}\n\n"
+        if hook_entries:
+            for entry in hook_entries:
+                heading = "### Hook Context"
+                if entry.hook_event_name:
+                    heading += f" ({entry.hook_event_name})"
+                markdown += f"{heading}\n\n{entry.additional_context}\n\n"
             markdown += "---\n\n"
 
         # Group entries into conversational turns
