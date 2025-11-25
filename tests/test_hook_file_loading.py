@@ -176,3 +176,80 @@ def test_find_hook_file_multiple_hooks_returns_match(claude_transcript_module):
             f"Expected {hook_b_path}, got {result}. "
             "Should match transcript_path in hook file."
         )
+
+
+def test_load_hook_entries_extracts_additionalContext(claude_transcript_module):
+    """Test that _load_hook_entries parses hookSpecificOutput.additionalContext.
+
+    Integration test workflow:
+    1. Creates a hook JSONL file with hookSpecificOutput structure
+    2. Calls _load_hook_entries(hook_file_path)
+    3. Verifies it returns list of Entry objects
+    4. Verifies Entry objects have correct type and additionalContext
+
+    Expected to fail with: AttributeError: 'SessionProcessor' object has no
+    attribute '_load_hook_entries'
+    """
+    # Arrange: Create hook file with hookSpecificOutput structure
+    with tempfile.TemporaryDirectory() as tmpdir:
+        hook_path = Path(tmpdir) / "test-hooks.jsonl"
+
+        # Hook entries with hookSpecificOutput.additionalContext
+        hook_entries = [
+            {
+                "hook_event": "UserPromptSubmit",
+                "logged_at": "2025-11-25T05:39:21.115514+00:00",
+                "session_id": "test-session-123",
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": "**CRITICAL**: Test hook context for verification"
+                }
+            },
+            {
+                "hook_event": "SessionStart",
+                "logged_at": "2025-11-25T05:38:00.000000+00:00",
+                "session_id": "test-session-123",
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": "Session initialization context"
+                }
+            }
+        ]
+
+        with open(hook_path, "w", encoding="utf-8") as f:
+            for entry in hook_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        # Act: Call _load_hook_entries
+        processor = claude_transcript_module.SessionProcessor()
+        entries = processor._load_hook_entries(str(hook_path))
+
+        # Assert: Should return list of Entry objects
+        assert isinstance(entries, list), (
+            f"Expected list of entries, got {type(entries)}"
+        )
+        assert len(entries) == 2, (
+            f"Expected 2 entries from hook file, got {len(entries)}"
+        )
+
+        # Verify first entry structure
+        first_entry = entries[0]
+        assert first_entry.type == "system_reminder", (
+            f"Expected entry type 'system_reminder', got {first_entry.type}"
+        )
+        assert "CRITICAL" in first_entry.additional_context, (
+            f"Expected 'CRITICAL' in additional_context, got: {first_entry.additional_context}"
+        )
+        assert "Test hook context" in first_entry.additional_context, (
+            "Expected full additionalContext text in entry"
+        )
+
+        # Verify timestamp extraction
+        assert first_entry.timestamp is not None, (
+            "Expected timestamp from logged_at field"
+        )
+
+        # Verify second entry
+        second_entry = entries[1]
+        assert second_entry.type == "system_reminder"
+        assert "Session initialization" in second_entry.additional_context

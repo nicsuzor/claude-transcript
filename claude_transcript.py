@@ -209,6 +209,49 @@ class SessionProcessor:
 
         return None
 
+    def _load_hook_entries(self, hook_file_path: str) -> List[Entry]:
+        """Load hook entries from JSONL file and convert to Entry objects.
+
+        Reads hook JSONL file line by line, extracts hookSpecificOutput.additionalContext,
+        and converts to Entry objects with type='system_reminder'.
+
+        Args:
+            hook_file_path: Path to hook JSONL file
+
+        Returns:
+            List of Entry objects with additionalContext extracted
+        """
+        entries = []
+
+        with open(hook_file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                data = json.loads(line)
+
+                # Skip entries without hookSpecificOutput
+                if 'hookSpecificOutput' not in data:
+                    continue
+
+                hook_output = data['hookSpecificOutput']
+
+                # Skip entries without additionalContext
+                if 'additionalContext' not in hook_output:
+                    continue
+
+                # Convert to Entry format
+                entry_data = {
+                    'type': 'system_reminder',
+                    'timestamp': data['logged_at'],
+                    'hookSpecificOutput': hook_output
+                }
+
+                entries.append(Entry(entry_data))
+
+        return entries
+
     def group_entries_into_turns(self, entries: List[Entry], agent_entries: Optional[Dict[str, List[Entry]]] = None) -> List[ConversationTurn]:
         """Group JSONL entries into conversational turns, correlating sidechains with main thread"""
         # First, separate main thread from sidechains and filter out meta entries
