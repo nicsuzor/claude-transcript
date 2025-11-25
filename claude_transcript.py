@@ -269,7 +269,8 @@ class SessionProcessor:
     def group_entries_into_turns(self, entries: List[Entry], agent_entries: Optional[Dict[str, List[Entry]]] = None) -> List[ConversationTurn]:
         """Group JSONL entries into conversational turns, correlating sidechains with main thread"""
         # First, separate main thread from sidechains and filter out meta entries
-        main_entries = [e for e in entries if not e.is_sidechain and e.type != 'summary' and not e.is_meta and e.type != 'system_reminder']
+        # Include system_reminder (hook context) in main flow
+        main_entries = [e for e in entries if not e.is_sidechain and e.type != 'summary' and not e.is_meta]
         sidechain_entries = [e for e in entries if e.is_sidechain]
         
         # Group sidechain entries by their conversation thread
@@ -302,7 +303,23 @@ class SessionProcessor:
                     'start_time': entry.timestamp,
                     'end_time': entry.timestamp  # Will be updated as we process assistant responses
                 }
-            
+
+            elif entry.type == 'system_reminder':
+                # Hook context - create a special turn for it
+                if entry.additional_context and entry.additional_context.strip():
+                    hook_turn = {
+                        'type': 'hook_context',
+                        'hook_event_name': entry.hook_event_name,
+                        'content': entry.additional_context,
+                        'start_time': entry.timestamp,
+                        'end_time': entry.timestamp
+                    }
+                    # Append current turn if exists, then add hook turn
+                    if current_turn:
+                        turns.append(current_turn)
+                        current_turn = {}
+                    turns.append(hook_turn)
+
             elif entry.type == 'assistant':
                 # Only process assistant entries if we have a current turn
                 if not current_turn:
@@ -387,9 +404,13 @@ class SessionProcessor:
                     )
         
         # Convert to ConversationTurn objects and filter out empty turns
+        # Keep hook_context turns as dicts
         conversation_turns = []
         for turn in turns:
-            if (turn.get('user_message', '').strip() or turn.get('assistant_sequence')):
+            # Hook context turns stay as dicts
+            if turn.get('type') == 'hook_context':
+                conversation_turns.append(turn)
+            elif (turn.get('user_message', '').strip() or turn.get('assistant_sequence')):
                 conversation_turns.append(ConversationTurn(
                     user_message=turn.get('user_message'),
                     assistant_sequence=turn.get('assistant_sequence', []),
@@ -397,7 +418,7 @@ class SessionProcessor:
                     start_time=turn.get('start_time'),
                     end_time=turn.get('end_time')
                 ))
-        
+
         return conversation_turns
     
     def format_session_as_markdown(self, session: SessionSummary, entries: List[Entry],
@@ -421,22 +442,18 @@ class SessionProcessor:
 
         markdown += "---\n\n"
 
-        # Extract and include hook contexts from system_reminder entries
-        hook_entries = [e for e in entries
-                       if e.type == 'system_reminder' and e.additional_context and e.additional_context.strip()]
-
-        if hook_entries:
-            for entry in hook_entries:
-                heading = "### Hook Context"
-                if entry.hook_event_name:
-                    heading += f" ({entry.hook_event_name})"
-                markdown += f"{heading}\n\n{entry.additional_context}\n\n"
-            markdown += "---\n\n"
-
-        # Group entries into conversational turns
+        # Group entries into conversational turns (hook context now woven in chronologically)
         turns = self.group_entries_into_turns(entries, agent_entries)
         
         for i, turn in enumerate(turns):
+            # Handle hook context turns specially
+            if isinstance(turn, dict) and turn.get('type') == 'hook_context':
+                heading = "### Hook Context"
+                if turn.get('hook_event_name'):
+                    heading += f" ({turn['hook_event_name']})"
+                markdown += f"{heading}\n\n{turn['content']}\n\n---\n\n"
+                continue
+
             # Format turn header (simple)
             timing_info = turn.timing_info
             header = f"## Turn {i + 1}"
