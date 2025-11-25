@@ -140,6 +140,15 @@ class SessionProcessor:
         # Load agent entries from agent-*.jsonl files
         agent_entries = self._load_agent_files(file_path)
 
+        # Load hook entries if hook file exists
+        hook_file = self._find_hook_file(file_path)
+        if hook_file:
+            hook_entries = self._load_hook_entries(hook_file)
+            entries.extend(hook_entries)
+            # Sort by timestamp to maintain chronological order (None timestamps come first)
+            from datetime import timezone
+            entries.sort(key=lambda e: e.timestamp if e.timestamp else datetime.min.replace(tzinfo=timezone.utc))
+
         return session_summary, entries, agent_entries
 
     def _load_agent_files(self, main_file_path: str) -> Dict[str, List[Entry]]:
