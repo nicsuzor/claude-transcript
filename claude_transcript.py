@@ -44,20 +44,22 @@ class Entry:
         self.is_meta = data.get('isMeta', False)
         self.tool_use_result = data.get('toolUseResult', {})
 
-        # Extract additionalContext from system_reminder entries
+        # Extract hook data from system_reminder entries
         self.additional_context = None
         self.hook_event_name = None
+        self.hook_exit_code = None
         if self.type == 'system_reminder':
             # Try hookSpecificOutput first (real session format)
             hook_output = data.get('hookSpecificOutput', {})
-            if isinstance(hook_output, dict) and hook_output.get('additionalContext'):
+            if isinstance(hook_output, dict):
                 self.additional_context = hook_output.get('additionalContext', '')
                 self.hook_event_name = hook_output.get('hookEventName')
+                self.hook_exit_code = hook_output.get('exitCode')
             # Fall back to content.additionalContext (test format)
-            elif isinstance(self.content, dict) and self.content.get('additionalContext'):
+            elif isinstance(self.content, dict):
                 self.additional_context = self.content.get('additionalContext', '')
-                if isinstance(self.content, dict):
-                    self.hook_event_name = self.content.get('hookEventName')
+                self.hook_event_name = self.content.get('hookEventName')
+                self.hook_exit_code = self.content.get('exitCode')
 
         # Parse timestamp
         self.timestamp = None
@@ -224,16 +226,17 @@ class SessionProcessor:
         return None
 
     def _load_hook_entries(self, hook_file_path: str) -> List[Entry]:
-        """Load hook entries from JSONL file and convert to Entry objects.
+        """Load ALL hook entries from JSONL file and convert to Entry objects.
 
-        Reads hook JSONL file line by line, extracts hookSpecificOutput.additionalContext,
-        and converts to Entry objects with type='system_reminder'.
+        Reads hook JSONL file line by line and creates Entry objects for ALL hooks,
+        not just ones with additionalContext. This shows when hooks were triggered
+        even if they output nothing.
 
         Args:
             hook_file_path: Path to hook JSONL file
 
         Returns:
-            List of Entry objects with additionalContext extracted
+            List of Entry objects representing all hook executions
         """
         entries = []
 
@@ -245,15 +248,18 @@ class SessionProcessor:
 
                 data = json.loads(line)
 
-                # Skip entries without hookSpecificOutput
-                if 'hookSpecificOutput' not in data:
-                    continue
+                # Create Entry for ALL hooks, not just ones with additionalContext
+                hook_output = data.get('hookSpecificOutput', {})
 
-                hook_output = data['hookSpecificOutput']
+                # If no hookSpecificOutput, create minimal one with just event name
+                if not hook_output:
+                    hook_output = {
+                        'hookEventName': data.get('hook_event', 'Unknown')
+                    }
 
-                # Skip entries without additionalContext
-                if 'additionalContext' not in hook_output:
-                    continue
+                # Add exit_code to hookSpecificOutput if present at top level
+                if 'exit_code' in data and 'exitCode' not in hook_output:
+                    hook_output['exitCode'] = data['exit_code']
 
                 # Convert to Entry format
                 entry_data = {
@@ -305,20 +311,20 @@ class SessionProcessor:
                 }
 
             elif entry.type == 'system_reminder':
-                # Hook context - create a special turn for it
-                if entry.additional_context and entry.additional_context.strip():
-                    hook_turn = {
-                        'type': 'hook_context',
-                        'hook_event_name': entry.hook_event_name,
-                        'content': entry.additional_context,
-                        'start_time': entry.timestamp,
-                        'end_time': entry.timestamp
-                    }
-                    # Append current turn if exists, then add hook turn
-                    if current_turn:
-                        turns.append(current_turn)
-                        current_turn = {}
-                    turns.append(hook_turn)
+                # Hook context - create a turn for ALL hooks, even empty ones
+                hook_turn = {
+                    'type': 'hook_context',
+                    'hook_event_name': entry.hook_event_name,
+                    'content': entry.additional_context or '',
+                    'exit_code': entry.hook_exit_code,
+                    'start_time': entry.timestamp,
+                    'end_time': entry.timestamp
+                }
+                # Append current turn if exists, then add hook turn
+                if current_turn:
+                    turns.append(current_turn)
+                    current_turn = {}
+                turns.append(hook_turn)
 
             elif entry.type == 'assistant':
                 # Only process assistant entries if we have a current turn
@@ -448,10 +454,28 @@ class SessionProcessor:
         for i, turn in enumerate(turns):
             # Handle hook context turns specially
             if isinstance(turn, dict) and turn.get('type') == 'hook_context':
-                heading = "### Hook Context"
-                if turn.get('hook_event_name'):
-                    heading += f" ({turn['hook_event_name']})"
-                markdown += f"{heading}\n\n{turn['content']}\n\n---\n\n"
+                heading = "### Hook"
+                event_name = turn.get('hook_event_name', 'Unknown')
+                exit_code = turn.get('exit_code')
+
+                # Show event name and exit status
+                if exit_code is None:
+                    # Old hook logs without exit codes
+                    status = ""
+                elif exit_code == 0:
+                    status = " ✓"
+                else:
+                    status = f" ✗ (exit {exit_code})"
+                heading += f": {event_name}{status}"
+
+                markdown += f"{heading}\n\n"
+
+                # Show content if present
+                content = turn.get('content', '').strip()
+                if content:
+                    markdown += f"{content}\n\n"
+
+                markdown += "---\n\n"
                 continue
 
             # Format turn header (simple)
