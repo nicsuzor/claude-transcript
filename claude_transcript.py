@@ -831,44 +831,62 @@ class SessionProcessor:
     def _format_time_offset(self, seconds: float) -> str:
         """Format time offset from conversation start in human-friendly format"""
         return self._format_duration(seconds)
-    
+
+    def _format_compact_args(self, tool_input: Dict[str, Any], max_length: int = 60) -> str:
+        """Format tool arguments as compact Python-like syntax"""
+        if not tool_input:
+            return ""
+
+        args = []
+        for key, value in tool_input.items():
+            # Skip very verbose parameters for certain tools
+            if key in ('old_string', 'new_string', 'prompt', 'content') and isinstance(value, str) and len(value) > 100:
+                continue  # Skip these verbose params
+
+            if isinstance(value, str):
+                # Truncate long strings intelligently
+                if len(value) > max_length:
+                    # For paths, just show filename
+                    if '/' in value and key in ('file_path', 'path'):
+                        value = value.split('/')[-1]
+                    else:
+                        value = value[:max_length-3] + "..."
+                # Escape quotes and newlines
+                value = value.replace('"', '\\"').replace('\n', '\\n')
+                args.append(f'{key}="{value}"')
+            elif isinstance(value, bool):
+                args.append(f'{key}={str(value)}')
+            elif isinstance(value, (int, float)):
+                args.append(f'{key}={value}')
+            elif isinstance(value, list):
+                if len(value) > 3:
+                    args.append(f'{key}=[{len(value)} items]')
+                else:
+                    args.append(f'{key}={value}')
+            elif isinstance(value, dict):
+                # For dicts, just show key count
+                args.append(f'{key}={{...{len(value)} keys}}')
+            else:
+                # For complex types, just indicate presence
+                args.append(f'{key}=...')
+
+        return ", ".join(args)
+
     def _format_tool_operation(self, tool_block: Dict[str, Any]) -> str:
         """Format a single tool operation with special handling for specific tools"""
         tool_name = tool_block.get('name', 'Unknown')
         tool_input = tool_block.get('input', {})
-        
-        if tool_name == 'MultiEdit':
-            return self._format_multiedit_operation(tool_input)
-        elif tool_name == 'TodoWrite':
+
+        # Special formatting for specific tools
+        if tool_name == 'TodoWrite':
             return self._format_todowrite_operation(tool_input)
-        elif tool_name == 'Task':
-            return self._format_task_operation(tool_input)
-        elif tool_name == 'Bash':
-            return self._format_bash_operation(tool_input)
-        elif tool_name in ['Edit', 'Write', 'Read']:
-            file_path = tool_input.get('file_path', 'Unknown')
-            return f"- **{tool_name}**: `{file_path}`\n"
-        elif tool_name in ['Grep', 'Glob']:
-            return self._format_search_operation(tool_name, tool_input)
+
+        # Compact Python-like syntax for most tools
+        args = self._format_compact_args(tool_input, max_length=60)
+        if args:
+            return f"- {tool_name}({args})\n"
         else:
-            return f"- **{tool_name}**: {json.dumps(tool_input, indent=2)}\n"
-    
-    def _format_multiedit_operation(self, tool_input: Dict[str, Any]) -> str:
-        """Format MultiEdit operations compactly"""
-        file_path = tool_input.get('file_path', 'Unknown')
-        edits = tool_input.get('edits', [])
-
-        # Handle case where edits is a JSON string instead of a list
-        if isinstance(edits, str):
-            try:
-                edits = json.loads(edits)
-            except (json.JSONDecodeError, ValueError):
-                return f"- **MultiEdit**: `{file_path}` (corrupted)\n"
-
-        if not isinstance(edits, list):
-            return f"- **MultiEdit**: `{file_path}` (invalid)\n"
-
-        return f"- **MultiEdit**: `{file_path}` ({len(edits)} changes)\n"
+            return f"- {tool_name}()\n"
     
     def _format_todowrite_operation(self, tool_input: Dict[str, Any]) -> str:
         """Format TodoWrite operations in a compact checkbox format"""
@@ -894,41 +912,7 @@ class SessionProcessor:
             result += f"  {symbol} {content_preview}\n"
 
         return result
-    
-    def _format_task_operation(self, tool_input: Dict[str, Any]) -> str:
-        """Format Task operations in a compact way"""
-        description = tool_input.get('description', 'No description')
-        subagent_type = tool_input.get('subagent_type', 'unknown')
 
-        return f"- **Task** ({subagent_type}): {description}\n"
-    
-    def _format_search_operation(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
-        """Format Grep/Glob operations in a readable way"""
-        pattern = tool_input.get('pattern', 'No pattern')
-        path = tool_input.get('path', 'No path specified')
-        include = tool_input.get('include', '')
-        
-        result = f"- **{tool_name}**: Search for `{pattern}`"
-        if path != 'No path specified':
-            result += f" in `{path}`"
-        if include:
-            result += f" (files: `{include}`)"
-        
-        return result + "\n"
-    
-    def _format_bash_operation(self, tool_input: Dict[str, Any]) -> str:
-        """Format Bash operations compactly"""
-        command = tool_input.get('command', 'No command')
-        description = tool_input.get('description', '')
-
-        # Truncate long commands
-        command_preview = self._truncate_for_display(command, 100)
-
-        if description and description != 'Bash command':
-            return f"- **Bash**: {description}\n"
-        else:
-            return f"- **Bash**: `{command_preview}`\n"
-    
     def _truncate_for_display(self, text: str, max_length: int) -> str:
         """Truncate text for display, handling newlines properly"""
         # Replace \n with proper newlines for markdown
