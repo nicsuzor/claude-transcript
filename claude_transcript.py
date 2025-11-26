@@ -364,7 +364,7 @@ class SessionProcessor:
                                     # First try: explicit agentId from tool result
                                     agent_id = self._extract_agent_id_from_result(tool_id, entries)
                                     if agent_id and agent_entries and agent_id in agent_entries:
-                                        tool_item['sidechain_summary'] = self._summarize_sidechain(agent_entries[agent_id])
+                                        tool_item['sidechain_summary'] = self._extract_sidechain(agent_entries[agent_id])
                                     else:
                                         # Fallback: existing timestamp-based sidechain lookup
                                         related_sidechain = self._find_related_sidechain(entry, sidechain_groups)
@@ -541,8 +541,11 @@ class SessionProcessor:
                         
                         # Add sidechain details if present
                         if item.get('sidechain_summary'):
-                            markdown += f"\n**Parallel Task Details:**\n\n"
-                            markdown += f"- **Task execution**: {item['sidechain_summary']}\n"
+                            markdown += f"\n**Agent Conversation:**\n\n"
+                            # Indent each line by 2 spaces
+                            indented_lines = [f"  {line}" if line.strip() else ""
+                                            for line in item['sidechain_summary'].split('\n')]
+                            markdown += '\n'.join(indented_lines) + '\n'
             
             markdown += "---\n\n"
         
