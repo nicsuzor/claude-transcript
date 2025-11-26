@@ -615,6 +615,32 @@ class SessionProcessor:
         
         return "; ".join(summary_parts) if summary_parts else "Parallel task execution"
 
+    def _extract_sidechain(self, sidechain_entries: List[Entry]) -> str:
+        """Extract full conversation from sidechain entries with text and tool operations"""
+        if not sidechain_entries:
+            return "No sidechain details available"
+
+        output_parts = []
+
+        for entry in sidechain_entries:
+            if entry.type == 'assistant' and entry.message:
+                content = entry.message.get('content', [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict):
+                            if block.get('type') == 'text':
+                                # Add text blocks as paragraphs
+                                text = block.get('text', '').strip()
+                                if text:
+                                    output_parts.append(text + '\n')
+                            elif block.get('type') == 'tool_use':
+                                # Format tool operations using existing formatter
+                                formatted_tool = self._format_tool_operation(block)
+                                if formatted_tool:
+                                    output_parts.append(formatted_tool)
+
+        return '\n'.join(output_parts)
+
     def _extract_agent_id_from_result(self, tool_id: str, all_entries: List[Entry]) -> Optional[str]:
         """Find the agentId from the tool result corresponding to this tool use"""
         for entry in all_entries:
