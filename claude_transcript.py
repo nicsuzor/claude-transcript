@@ -199,32 +199,39 @@ class SessionProcessor:
         """
         session_path = Path(session_file_path)
 
-        # Hook files are stored in ~/.cache/aops/sessions/
-        hook_dir = Path.home() / ".cache" / "aops" / "sessions"
+        # Search multiple locations for hook files
+        search_locations = [
+            # 1. Session file's parent directory / "hooks" subdirectory (for tests)
+            session_path.parent / "hooks",
+            # 2. ~/.cache/aops/sessions/ (for production)
+            Path.home() / ".cache" / "aops" / "sessions",
+        ]
 
-        # Hook directory must exist
-        if not hook_dir.exists():
-            return None
-
-        # Search all *-hooks.jsonl files
-        for hook_file in hook_dir.glob("*-hooks.jsonl"):
-            try:
-                with open(hook_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                            # Check if transcript_path field matches session file
-                            if 'transcript_path' not in data:
-                                continue
-                            if data['transcript_path'] == session_file_path:
-                                return str(hook_file)
-                        except json.JSONDecodeError:
-                            continue
-            except (OSError, IOError):
+        # Search each location for matching hook file
+        for hook_dir in search_locations:
+            # Skip if directory doesn't exist
+            if not hook_dir.exists():
                 continue
+
+            # Search all *-hooks.jsonl files in this location
+            for hook_file in hook_dir.glob("*-hooks.jsonl"):
+                try:
+                    with open(hook_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                                # Check if transcript_path field matches session file
+                                if 'transcript_path' not in data:
+                                    continue
+                                if data['transcript_path'] == session_file_path:
+                                    return str(hook_file)
+                            except json.JSONDecodeError:
+                                continue
+                except (OSError, IOError):
+                    continue
 
         return None
 
