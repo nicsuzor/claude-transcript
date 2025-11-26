@@ -437,3 +437,104 @@ def test_assistant_section_uses_agent_header():
     wrong_assistant_format = "**Assistant Response:**\nHello from agent"
     assert wrong_assistant_format not in markdown, \
         f"Assistant section should NOT use old format with **Assistant Response:**. Got:\n{repr(markdown)}"
+
+
+def test_empty_successful_hooks_filtered_from_render():
+    """Test that empty successful hooks do NOT appear in transcript markdown.
+
+    Behavior to test:
+    - Empty successful hooks (exit_code 0, no content) should NOT render
+    - Empty error hooks (exit_code != 0, no content) SHOULD render
+    - Hooks with content should always render
+
+    Creates a conversation with 3 hooks:
+    1. PreToolUse: exit_code 0, empty content → should NOT appear in markdown
+    2. PostToolUse: exit_code 1, empty content → SHOULD appear in markdown (error)
+    3. UserPromptSubmit: exit_code 0, has content → SHOULD appear in markdown (has content)
+
+    This test FAILS with current implementation because it renders all 3 hooks.
+    The filter logic at render time is missing.
+    """
+    # Create entries with mixed hook context data
+    entries = [
+        Entry({
+            'type': 'user',
+            'uuid': 'user-msg-001',
+            'timestamp': '2025-11-26T10:00:00Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'run the test'
+                    }
+                ]
+            },
+            'hook_context': {
+                'PreToolUse': {
+                    'event': 'PreToolUse',
+                    'exit_code': 0,
+                    'content': ''  # Empty successful hook - should NOT render
+                },
+                'PostToolUse': {
+                    'event': 'PostToolUse',
+                    'exit_code': 1,
+                    'content': ''  # Empty error hook - SHOULD render
+                },
+                'UserPromptSubmit': {
+                    'event': 'UserPromptSubmit',
+                    'exit_code': 0,
+                    'content': 'CRITICAL: Focus on the user request'  # Has content - SHOULD render
+                }
+            }
+        }),
+        Entry({
+            'type': 'assistant',
+            'uuid': 'agent-msg-001',
+            'timestamp': '2025-11-26T10:00:01Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Running test now'
+                    }
+                ]
+            }
+        })
+    ]
+
+    # Create processor
+    processor = SessionProcessor()
+
+    # Group entries into turns
+    turns = processor.group_entries_into_turns(entries)
+
+    # Should have created one turn
+    assert len(turns) == 1, f"Expected 1 turn, got {len(turns)}"
+
+    # Create a session summary
+    session = SessionSummary(uuid='test-session', summary='Test Session')
+
+    # Format as markdown
+    markdown = processor.format_session_as_markdown(session, entries)
+
+    # CRITICAL ASSERTIONS:
+
+    # 1. Empty successful hook (PreToolUse exit_code 0, no content) should NOT appear
+    assert "* ✓ PreToolUse hook:" not in markdown, \
+        f"Empty successful hook (PreToolUse) should NOT render in markdown. Got:\n{markdown}"
+
+    # 2. Empty error hook (PostToolUse exit_code 1, no content) SHOULD appear
+    assert "* ✗ PostToolUse hook:" in markdown or "PostToolUse hook:" in markdown, \
+        f"Empty error hook (PostToolUse with exit_code 1) SHOULD render in markdown. Got:\n{markdown}"
+
+    # 3. Hook with content (UserPromptSubmit) SHOULD appear regardless of exit code
+    assert "* ✓ UserPromptSubmit hook:" in markdown, \
+        f"Hook with content (UserPromptSubmit) SHOULD render in markdown. Got:\n{markdown}"
+
+    assert "CRITICAL: Focus on the user request" in markdown, \
+        f"Hook content should appear in markdown. Got:\n{markdown}"
+
+    # Additional verification: verify markdown doesn't contain section headers
+    # for the empty successful hook
+    assert "### Hook: PreToolUse" not in markdown, \
+        f"PreToolUse should not have separate hook section header. Got:\n{markdown}"

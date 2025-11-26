@@ -517,8 +517,12 @@ class SessionProcessor:
                 if turn.hook_context:
                     for hook_name, hook_data in turn.hook_context.items():
                         exit_code = hook_data.get('exit_code', 0)
-                        checkmark = "✓" if exit_code == 0 else "✗"
                         content = hook_data.get('content', '')
+                        # Skip empty successful hooks (exit_code 0 with no content)
+                        # But keep error hooks even if empty
+                        if exit_code == 0 and not content.strip():
+                            continue
+                        checkmark = "✓" if exit_code == 0 else "✗"
                         markdown += f"* {checkmark} {hook_name} hook: {content}\n"
 
                 markdown += "\n"
