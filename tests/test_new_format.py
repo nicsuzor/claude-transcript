@@ -256,3 +256,114 @@ def test_timing_format_as_bullet_list():
     # The current implementation will fail this because it uses " · "
     assert " · " not in markdown or "Offset:" not in markdown, \
         f"Timing should NOT use ' · ' separator format, should use bullets instead. Got:\n{markdown}"
+
+
+def test_hooks_inline_under_user_section():
+    """Test that hooks appear as inline bullets under the User section.
+
+    Currently hooks are rendered as separate "### Hook:" sections with "---" separators.
+    Expected new format: hooks should be inline bullets under the User section:
+
+    ### User
+    `run the tja dash`
+    * ✓ UserPromptSubmit hook: **CRITICAL**: Focus on the user's specific request...
+    * ✓ PreToolUse hook: {}
+    * ✓ PostToolUse hook: {}
+
+    This test creates a conversation with a user message that has hook context data
+    and verifies that hooks appear as bullets with checkmarks under the User section,
+    NOT as separate "### Hook: UserPromptSubmit ✓" sections.
+
+    This test should FAIL because current implementation renders hooks as separate sections.
+    """
+    # Create entries with hook context data
+    entries = [
+        Entry({
+            'type': 'user',
+            'uuid': 'user-msg-001',
+            'timestamp': '2025-11-26T10:00:00Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'run the tja dash'
+                    }
+                ]
+            },
+            'hook_context': {
+                'UserPromptSubmit': {
+                    'event': 'UserPromptSubmit',
+                    'exit_code': 0,
+                    'content': 'CRITICAL: Focus on the user\'s specific request and avoid scope creep.'
+                },
+                'PreToolUse': {
+                    'event': 'PreToolUse',
+                    'exit_code': 0,
+                    'content': '{}'
+                },
+                'PostToolUse': {
+                    'event': 'PostToolUse',
+                    'exit_code': 0,
+                    'content': '{}'
+                }
+            }
+        }),
+        Entry({
+            'type': 'assistant',
+            'uuid': 'agent-msg-001',
+            'timestamp': '2025-11-26T10:00:01Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'I will run the TJA dashboard for you.'
+                    }
+                ]
+            }
+        })
+    ]
+
+    # Create processor
+    processor = SessionProcessor()
+
+    # Group entries into turns
+    turns = processor.group_entries_into_turns(entries)
+
+    # Should have created one turn
+    assert len(turns) == 1, f"Expected 1 turn, got {len(turns)}"
+
+    # Create a session summary
+    session = SessionSummary(uuid='test-session', summary='Test Session')
+
+    # Format as markdown
+    markdown = processor.format_session_as_markdown(session, entries)
+
+    # Verify new format: hooks should appear as bullets under User section
+    # Expected patterns:
+    # * ✓ UserPromptSubmit hook: CRITICAL...
+    # * ✓ PreToolUse hook: {}
+    # * ✓ PostToolUse hook: {}
+    assert "* ✓ UserPromptSubmit hook:" in markdown, \
+        f"Expected markdown to contain '* ✓ UserPromptSubmit hook:' as inline bullet under User section, but got:\n{markdown}"
+
+    assert "* ✓ PreToolUse hook:" in markdown, \
+        f"Expected markdown to contain '* ✓ PreToolUse hook:' as inline bullet, but got:\n{markdown}"
+
+    assert "* ✓ PostToolUse hook:" in markdown, \
+        f"Expected markdown to contain '* ✓ PostToolUse hook:' as inline bullet, but got:\n{markdown}"
+
+    # Verify hooks do NOT appear as separate "### Hook:" sections
+    # Current implementation will fail this because it renders hooks as separate sections
+    assert "### Hook: UserPromptSubmit" not in markdown, \
+        f"Hooks should NOT be rendered as separate '### Hook:' sections. Should be inline bullets under User section. Got:\n{markdown}"
+
+    # Verify hooks appear in User section (before Assistant Response)
+    user_section_end = markdown.find("**Assistant Response:**")
+    assert user_section_end > 0, "Could not find Assistant Response section"
+
+    user_section_content = markdown[:user_section_end]
+    assert "### User" in user_section_content, \
+        "User section not found before Assistant Response"
+
+    assert "* ✓ UserPromptSubmit hook:" in user_section_content, \
+        f"Hook bullet should appear in User section (before Assistant Response). Got:\n{markdown}"

@@ -43,6 +43,7 @@ class Entry:
         self.is_sidechain = data.get('isSidechain', False)
         self.is_meta = data.get('isMeta', False)
         self.tool_use_result = data.get('toolUseResult', {})
+        self.hook_context = data.get('hook_context', {})
 
         # Extract hook data from system_reminder entries
         self.additional_context = None
@@ -51,12 +52,12 @@ class Entry:
         if self.type == 'system_reminder':
             # Try hookSpecificOutput first (real session format)
             hook_output = data.get('hookSpecificOutput', {})
-            if isinstance(hook_output, dict):
+            if isinstance(hook_output, dict) and hook_output:
                 self.additional_context = hook_output.get('additionalContext', '')
                 self.hook_event_name = hook_output.get('hookEventName')
                 self.hook_exit_code = hook_output.get('exitCode')
             # Fall back to content.additionalContext (test format)
-            elif isinstance(self.content, dict):
+            if not self.additional_context and isinstance(self.content, dict):
                 self.additional_context = self.content.get('additionalContext', '')
                 self.hook_event_name = self.content.get('hookEventName')
                 self.hook_exit_code = self.content.get('exitCode')
@@ -98,16 +99,18 @@ class TimingInfo:
 
 class ConversationTurn:
     """A single conversation turn"""
-    def __init__(self, user_message: Optional[str] = None, 
+    def __init__(self, user_message: Optional[str] = None,
                  assistant_sequence: List[Dict[str, Any]] = None,
                  timing_info: Optional[TimingInfo] = None,
                  start_time: Optional[datetime] = None,
-                 end_time: Optional[datetime] = None):
+                 end_time: Optional[datetime] = None,
+                 hook_context: Optional[Dict[str, Any]] = None):
         self.user_message = user_message
         self.assistant_sequence = assistant_sequence or []
         self.timing_info = timing_info
         self.start_time = start_time
         self.end_time = end_time
+        self.hook_context = hook_context or {}
 
 
 class SessionProcessor:
@@ -307,7 +310,8 @@ class SessionProcessor:
                     'user_message': user_content,
                     'assistant_sequence': [],  # Chronological sequence of text and tool operations
                     'start_time': entry.timestamp,
-                    'end_time': entry.timestamp  # Will be updated as we process assistant responses
+                    'end_time': entry.timestamp,  # Will be updated as we process assistant responses
+                    'hook_context': entry.hook_context
                 }
 
             elif entry.type == 'system_reminder':
@@ -422,7 +426,8 @@ class SessionProcessor:
                     assistant_sequence=turn.get('assistant_sequence', []),
                     timing_info=turn.get('timing_info'),
                     start_time=turn.get('start_time'),
-                    end_time=turn.get('end_time')
+                    end_time=turn.get('end_time'),
+                    hook_context=turn.get('hook_context', {})
                 ))
 
         return conversation_turns
@@ -454,19 +459,23 @@ class SessionProcessor:
         for i, turn in enumerate(turns):
             # Handle hook context turns specially
             if isinstance(turn, dict) and turn.get('type') == 'hook_context':
-                heading = "### Hook"
-                event_name = turn.get('hook_event_name', 'Unknown')
+                event_name = turn.get('hook_event_name')
                 exit_code = turn.get('exit_code')
 
-                # Show event name and exit status
-                if exit_code is None:
-                    # Old hook logs without exit codes
-                    status = ""
-                elif exit_code == 0:
-                    status = " ✓"
+                # Build heading based on whether we have an event name
+                if event_name:
+                    heading = "### Hook"
+                    # Show event name and exit status
+                    if exit_code is None:
+                        # Old hook logs without exit codes
+                        status = ""
+                    elif exit_code == 0:
+                        status = " ✓"
+                    else:
+                        status = f" ✗ (exit {exit_code})"
+                    heading += f": {event_name}{status}"
                 else:
-                    status = f" ✗ (exit {exit_code})"
-                heading += f": {event_name}{status}"
+                    heading = "### Hook Context"
 
                 markdown += f"{heading}\n\n"
 
@@ -502,8 +511,18 @@ class SessionProcessor:
             
             # User message
             if turn.user_message:
-                markdown += f"### User\n`{turn.user_message}`\n\n"
-            
+                markdown += f"### User\n`{turn.user_message}`\n"
+
+                # Add inline hooks if present
+                if turn.hook_context:
+                    for hook_name, hook_data in turn.hook_context.items():
+                        exit_code = hook_data.get('exit_code', 0)
+                        checkmark = "✓" if exit_code == 0 else "✗"
+                        content = hook_data.get('content', '')
+                        markdown += f"* {checkmark} {hook_name} hook: {content}\n"
+
+                markdown += "\n"
+
             # Assistant sequence (chronological text and tool operations)
             assistant_sequence = turn.assistant_sequence
             if assistant_sequence:
