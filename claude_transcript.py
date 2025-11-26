@@ -540,10 +540,10 @@ class SessionProcessor:
                             markdown += "\n"
                         
                         if not in_assistant_response:
-                            markdown += f"**Assistant Response:**\n{content}\n\n"
+                            markdown += f"### Agent\n{content}\n\n"
                             in_assistant_response = True
                         else:
-                            markdown += f"**Assistant Response:**\n{content}\n\n"
+                            markdown += f"### Agent\n{content}\n\n"
                             in_assistant_response = True
                     
                     elif item_type == 'tool':

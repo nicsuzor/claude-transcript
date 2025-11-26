@@ -357,9 +357,9 @@ def test_hooks_inline_under_user_section():
     assert "### Hook: UserPromptSubmit" not in markdown, \
         f"Hooks should NOT be rendered as separate '### Hook:' sections. Should be inline bullets under User section. Got:\n{markdown}"
 
-    # Verify hooks appear in User section (before Assistant Response)
-    user_section_end = markdown.find("**Assistant Response:**")
-    assert user_section_end > 0, "Could not find Assistant Response section"
+    # Verify hooks appear in User section (before Agent section)
+    user_section_end = markdown.find("### Agent")
+    assert user_section_end > 0, "Could not find Agent section"
 
     user_section_content = markdown[:user_section_end]
     assert "### User" in user_section_content, \
@@ -367,3 +367,73 @@ def test_hooks_inline_under_user_section():
 
     assert "* ✓ UserPromptSubmit hook:" in user_section_content, \
         f"Hook bullet should appear in User section (before Assistant Response). Got:\n{markdown}"
+
+
+def test_assistant_section_uses_agent_header():
+    """Test that assistant responses use ### Agent header instead of **Assistant Response:**.
+
+    Currently the format is:
+    **Assistant Response:**
+    Hello from agent
+
+    Expected new format:
+    ### Agent
+    Hello from agent
+
+    This test should FAIL because the current implementation uses "**Assistant Response:**"
+    instead of "### Agent" header format.
+    """
+    # Create minimal entries for a conversation turn
+    entries = [
+        Entry({
+            'type': 'user',
+            'uuid': 'user-msg-001',
+            'timestamp': '2025-11-26T10:00:00Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Hello'
+                    }
+                ]
+            }
+        }),
+        Entry({
+            'type': 'assistant',
+            'uuid': 'agent-msg-001',
+            'timestamp': '2025-11-26T10:00:01Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Hello from agent'
+                    }
+                ]
+            }
+        })
+    ]
+
+    # Create processor
+    processor = SessionProcessor()
+
+    # Group entries into turns
+    turns = processor.group_entries_into_turns(entries)
+
+    # Should have created one turn
+    assert len(turns) == 1, f"Expected 1 turn, got {len(turns)}"
+
+    # Create a session summary
+    session = SessionSummary(uuid='test-session', summary='Test Session')
+
+    # Format as markdown
+    markdown = processor.format_session_as_markdown(session, entries)
+
+    # Verify that assistant section uses new format: "### Agent\nHello from agent"
+    expected_agent_section = "### Agent\nHello from agent"
+    assert expected_agent_section in markdown, \
+        f"Expected markdown to contain {repr(expected_agent_section)}\n\nGot:\n{repr(markdown)}"
+
+    # Verify that the old format is NOT in the markdown
+    wrong_assistant_format = "**Assistant Response:**\nHello from agent"
+    assert wrong_assistant_format not in markdown, \
+        f"Assistant section should NOT use old format with **Assistant Response:**. Got:\n{repr(markdown)}"
