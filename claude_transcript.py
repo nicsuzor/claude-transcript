@@ -161,16 +161,35 @@ class SessionProcessor:
         return session_summary, entries, agent_entries
 
     def _load_agent_files(self, main_file_path: str) -> Dict[str, List[Entry]]:
-        """Load all agent-*.jsonl files in the same directory"""
+        """Load agent-*.jsonl files that belong to this session (matching sessionId)"""
         agent_entries: Dict[str, List[Entry]] = {}
 
         main_path = Path(main_file_path)
         session_dir = main_path.parent
+        # Get main session UUID from filename
+        main_session_uuid = main_path.stem
 
         for agent_file in session_dir.glob("agent-*.jsonl"):
             agent_id = agent_file.stem.replace("agent-", "")
-            entries = []
 
+            # Check if this agent file belongs to the current session
+            # by reading the first entry's sessionId
+            belongs_to_session = False
+            with open(agent_file, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+                if first_line:
+                    try:
+                        first_entry_data = json.loads(first_line)
+                        if first_entry_data.get('sessionId') == main_session_uuid:
+                            belongs_to_session = True
+                    except json.JSONDecodeError:
+                        pass
+
+            if not belongs_to_session:
+                continue
+
+            # Load all entries from this agent file
+            entries = []
             with open(agent_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
