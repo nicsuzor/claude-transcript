@@ -86,6 +86,76 @@ def test_turn_header_includes_blank_line():
         f"Turn header should NOT be in the old format without space: {repr(wrong_header)}"
 
 
+def test_user_section_format_new_style():
+    """Test that user messages are formatted with ### User header and backticks.
+
+    Currently the format is:
+    **User Request:**
+    Hello world
+
+    Expected new format:
+    ### User
+    `Hello world`
+
+    This test should FAIL because the current implementation uses "**User Request:**"
+    and does not wrap the message in backticks.
+    """
+    # Create minimal entries for a conversation turn
+    entries = [
+        Entry({
+            'type': 'user',
+            'uuid': 'user-msg-001',
+            'timestamp': '2025-11-26T10:00:00Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Hello world'
+                    }
+                ]
+            }
+        }),
+        Entry({
+            'type': 'assistant',
+            'uuid': 'agent-msg-001',
+            'timestamp': '2025-11-26T10:00:01Z',
+            'message': {
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Hi there'
+                    }
+                ]
+            }
+        })
+    ]
+
+    # Create processor
+    processor = SessionProcessor()
+
+    # Group entries into turns
+    turns = processor.group_entries_into_turns(entries)
+
+    # Should have created one turn
+    assert len(turns) == 1, f"Expected 1 turn, got {len(turns)}"
+
+    # Create a session summary
+    session = SessionSummary(uuid='test-session', summary='Test Session')
+
+    # Format as markdown
+    markdown = processor.format_session_as_markdown(session, entries)
+
+    # Verify that user section uses new format: "### User\n`Hello world`"
+    expected_user_section = "### User\n`Hello world`"
+    assert expected_user_section in markdown, \
+        f"Expected markdown to contain {repr(expected_user_section)}\n\nGot:\n{repr(markdown)}"
+
+    # Verify that the old format is NOT in the markdown
+    wrong_user_format = "**User Request:**\nHello world"
+    assert wrong_user_format not in markdown, \
+        f"User section should NOT use old format with **User Request:**. Got:\n{repr(markdown)}"
+
+
 def test_timing_format_as_bullet_list():
     """Test that timing information is formatted as bullet list.
 

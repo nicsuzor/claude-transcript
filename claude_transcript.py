@@ -502,7 +502,7 @@ class SessionProcessor:
             
             # User message
             if turn.user_message:
-                markdown += f"**User Request:**\n{turn.user_message}\n\n"
+                markdown += f"### User\n`{turn.user_message}`\n\n"
             
             # Assistant sequence (chronological text and tool operations)
             assistant_sequence = turn.assistant_sequence
