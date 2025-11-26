@@ -498,7 +498,7 @@ class SessionProcessor:
                     timing_lines.append(f"Duration: {timing_info.duration}")
                 
                 if timing_lines:
-                    markdown += " · ".join(timing_lines) + "\n\n"
+                    markdown += "\n".join(f"* {line}" for line in timing_lines) + "\n\n"
             
             # User message
             if turn.user_message:
