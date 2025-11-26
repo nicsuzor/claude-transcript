@@ -480,7 +480,7 @@ class SessionProcessor:
 
             # Format turn header (simple)
             timing_info = turn.timing_info
-            header = f"## Turn {i + 1}"
+            header = f"## Turn {i + 1} "
             markdown += f"{header}\n\n"
             
             # Add timing information underneath as plain text
