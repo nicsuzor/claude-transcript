@@ -44,6 +44,8 @@ class Entry:
         self.is_meta = data.get('isMeta', False)
         self.tool_use_result = data.get('toolUseResult', {})
         self.hook_context = data.get('hook_context', {})
+        self.subagent_id = data.get('subagentId')  # Track which subagent produced this
+        self.summary_text = data.get('summary')  # Summary content for summary messages
 
         # Extract hook data from system_reminder entries
         self.additional_context = None
@@ -304,8 +306,8 @@ class SessionProcessor:
     def group_entries_into_turns(self, entries: List[Entry], agent_entries: Optional[Dict[str, List[Entry]]] = None) -> List[ConversationTurn]:
         """Group JSONL entries into conversational turns, correlating sidechains with main thread"""
         # First, separate main thread from sidechains and filter out meta entries
-        # Include system_reminder (hook context) in main flow
-        main_entries = [e for e in entries if not e.is_sidechain and e.type != 'summary' and not e.is_meta]
+        # Include system_reminder (hook context) and summary messages in main flow
+        main_entries = [e for e in entries if not e.is_sidechain and not e.is_meta]
         sidechain_entries = [e for e in entries if e.is_sidechain]
         
         # Group sidechain entries by their conversation thread
@@ -356,6 +358,23 @@ class SessionProcessor:
                     current_turn = {}
                 turns.append(hook_turn)
 
+            elif entry.type == 'summary':
+                # Summary message - create a turn for it
+                summary_text = entry.summary_text or ''
+                if summary_text:
+                    summary_turn = {
+                        'type': 'summary',
+                        'content': summary_text,
+                        'subagent_id': entry.subagent_id,
+                        'start_time': entry.timestamp,
+                        'end_time': entry.timestamp
+                    }
+                    # Append current turn if exists, then add summary turn
+                    if current_turn:
+                        turns.append(current_turn)
+                        current_turn = {}
+                    turns.append(summary_turn)
+
             elif entry.type == 'assistant':
                 # Only process assistant entries if we have a current turn
                 if not current_turn:
@@ -376,7 +395,8 @@ class SessionProcessor:
                             if text_content:
                                 current_turn['assistant_sequence'].append({
                                     'type': 'text',
-                                    'content': text_content
+                                    'content': text_content,
+                                    'subagent_id': entry.subagent_id  # Preserve subagent attribution
                                 })
                         elif block.get('type') == 'tool_use':
                             # Format tool operation
@@ -407,7 +427,8 @@ class SessionProcessor:
                         if text_content:
                             current_turn['assistant_sequence'].append({
                                 'type': 'text',
-                                'content': text_content
+                                'content': text_content,
+                                'subagent_id': entry.subagent_id  # Preserve subagent attribution
                             })
                 
                 # Update turn end time with this assistant entry
@@ -440,11 +461,11 @@ class SessionProcessor:
                     )
         
         # Convert to ConversationTurn objects and filter out empty turns
-        # Keep hook_context turns as dicts
+        # Keep hook_context and summary turns as dicts
         conversation_turns = []
         for turn in turns:
-            # Hook context turns stay as dicts
-            if turn.get('type') == 'hook_context':
+            # Hook context and summary turns stay as dicts
+            if turn.get('type') in ('hook_context', 'summary'):
                 conversation_turns.append(turn)
             elif (turn.get('user_message', '').strip() or turn.get('assistant_sequence')):
                 conversation_turns.append(ConversationTurn(
@@ -513,6 +534,21 @@ class SessionProcessor:
                 markdown += "---\n\n"
                 continue
 
+            # Handle summary messages
+            if isinstance(turn, dict) and turn.get('type') == 'summary':
+                content = turn.get('content', '').strip()
+                subagent_id = turn.get('subagent_id')
+
+                if content:
+                    markdown += "---\n\n"
+                    markdown += "**Summary"
+                    if subagent_id:
+                        markdown += f" (Subagent: {subagent_id})"
+                    markdown += "**\n\n"
+                    markdown += f"{content}\n\n"
+                    markdown += "---\n\n"
+                continue
+
             # Format turn header (simple)
             timing_info = turn.timing_info
             header = f"## Turn {i + 1} "
@@ -537,7 +573,7 @@ class SessionProcessor:
             
             # User message
             if turn.user_message:
-                markdown += f"### User\n`{turn.user_message}`\n"
+                markdown += f"**User:** {turn.user_message}\n\n"
 
                 # Add inline hooks if present
                 if turn.hook_context:
@@ -551,41 +587,48 @@ class SessionProcessor:
                         checkmark = "✓" if exit_code == 0 else "✗"
                         markdown += f"* {checkmark} {hook_name} hook: {content}\n"
 
-                markdown += "\n"
+                if turn.hook_context:
+                    markdown += "\n"
 
             # Assistant sequence (chronological text and tool operations)
             assistant_sequence = turn.assistant_sequence
             if assistant_sequence:
                 in_assistant_response = False
                 in_actions_section = False
-                
+
                 for item in assistant_sequence:
                     item_type = item.get('type')
                     content = item.get('content', '')
-                    
+                    subagent_id = item.get('subagent_id')
+
                     if item_type == 'text':
                         # Close actions section if we were in one
                         if in_actions_section:
                             in_actions_section = False
                             markdown += "\n"
-                        
+
+                        # Format header with subagent ID if present
+                        if subagent_id:
+                            header = f"**Agent ({subagent_id}):**"
+                        else:
+                            header = "**Agent:**"
+
                         if not in_assistant_response:
-                            markdown += f"### Agent\n{content}\n\n"
+                            markdown += f"{header} {content}\n\n"
                             in_assistant_response = True
                         else:
-                            markdown += f"### Agent\n{content}\n\n"
+                            markdown += f"{header} {content}\n\n"
                             in_assistant_response = True
-                    
+
                     elif item_type == 'tool':
                         # Close assistant response section if we were in one
                         if in_assistant_response:
                             in_assistant_response = False
-                        
-                        # Only add "Actions Taken:" header if not already in actions section
+
+                        # Don't add "Actions Taken:" header, just list tools
                         if not in_actions_section:
-                            markdown += f"**Actions Taken:**\n\n"
                             in_actions_section = True
-                        
+
                         markdown += content
                         
                         # Add sidechain details if present
@@ -811,85 +854,53 @@ class SessionProcessor:
             return f"- **{tool_name}**: {json.dumps(tool_input, indent=2)}\n"
     
     def _format_multiedit_operation(self, tool_input: Dict[str, Any]) -> str:
-        """Format MultiEdit operations in a readable way"""
+        """Format MultiEdit operations compactly"""
         file_path = tool_input.get('file_path', 'Unknown')
         edits = tool_input.get('edits', [])
-        
+
         # Handle case where edits is a JSON string instead of a list
         if isinstance(edits, str):
             try:
                 edits = json.loads(edits)
             except (json.JSONDecodeError, ValueError):
-                return f"- **MultiEdit**: `{file_path}` (corrupted edits data)\n"
-        
+                return f"- **MultiEdit**: `{file_path}` (corrupted)\n"
+
         if not isinstance(edits, list):
-            return f"- **MultiEdit**: `{file_path}` (invalid edits format)\n"
-        
-        result = f"- **MultiEdit**: `{file_path}` ({len(edits)} changes)\n\n"
-        
-        for i, edit in enumerate(edits, 1):
-            if not isinstance(edit, dict):
-                result += f"  **Change {i}:** (Invalid edit format)\n"
-                continue
-            
-            old_string = edit.get('old_string', '')
-            new_string = edit.get('new_string', '')
-            
-            # Truncate very long strings for readability
-            old_preview = self._truncate_for_display(old_string, 100)
-            new_preview = self._truncate_for_display(new_string, 100)
-            
-            result += f"  **Change {i}:**\n"
-            result += f"  ```diff\n"
-            result += f"  - {old_preview}\n"
-            result += f"  + {new_preview}\n"
-            result += f"  ```\n"
-        
-        return result.rstrip() + "\n"
+            return f"- **MultiEdit**: `{file_path}` (invalid)\n"
+
+        return f"- **MultiEdit**: `{file_path}` ({len(edits)} changes)\n"
     
     def _format_todowrite_operation(self, tool_input: Dict[str, Any]) -> str:
-        """Format TodoWrite operations in a readable way"""
+        """Format TodoWrite operations in a compact checkbox format"""
         todos = tool_input.get('todos', [])
-        
-        result = f"- **TodoWrite**: Updated task list ({len(todos)} items)\n\n"
-        
-        # Create a simple table-like format
-        result += "  | Status | Priority | Task |\n"
-        result += "  |--------|----------|------|\n"
-        
+
+        result = f"- **TodoWrite** ({len(todos)} items):\n"
+
         for todo in todos:
             status = todo.get('status', 'pending')
-            priority = todo.get('priority', 'medium')
             content = todo.get('content', 'No description')
-            
+
+            # Use checkbox symbols
+            if status == 'completed':
+                symbol = '✓'
+            elif status == 'in_progress':
+                symbol = '▶'
+            else:
+                symbol = '□'
+
             # Truncate long content
-            content_preview = self._truncate_for_display(content, 60)
-            
-            result += f"  | {status} | {priority} | {content_preview} |\n"
-        
-        return result.rstrip() + "\n"
+            content_preview = self._truncate_for_display(content, 80)
+
+            result += f"  {symbol} {content_preview}\n"
+
+        return result
     
     def _format_task_operation(self, tool_input: Dict[str, Any]) -> str:
-        """Format Task operations in a readable way"""
+        """Format Task operations in a compact way"""
         description = tool_input.get('description', 'No description')
-        prompt = tool_input.get('prompt', 'No prompt provided')
-        
-        result = f"- **Task**: {description}\n\n"
-        result += "  ```\n"
-        
-        # Show first few lines of the prompt
-        prompt_lines = prompt.split('\n')
-        preview_lines = prompt_lines[:5]  # Show first 5 lines
-        
-        for line in preview_lines:
-            result += f"  {line}\n"
-            
-        if len(prompt_lines) > 5:
-            result += f"  ... ({len(prompt_lines) - 5} more lines)\n"
-        
-        result += "  ```\n"
-        
-        return result.rstrip() + "\n"
+        subagent_type = tool_input.get('subagent_type', 'unknown')
+
+        return f"- **Task** ({subagent_type}): {description}\n"
     
     def _format_search_operation(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
         """Format Grep/Glob operations in a readable way"""
@@ -906,16 +917,17 @@ class SessionProcessor:
         return result + "\n"
     
     def _format_bash_operation(self, tool_input: Dict[str, Any]) -> str:
-        """Format Bash operations as clean markdown code blocks"""
+        """Format Bash operations compactly"""
         command = tool_input.get('command', 'No command')
-        description = tool_input.get('description', 'Bash command')
-        
-        result = f"- **Bash**: {description}\n\n"
-        result += "  ```bash\n"
-        result += f"  {command}\n"
-        result += "  ```\n"
-        
-        return result
+        description = tool_input.get('description', '')
+
+        # Truncate long commands
+        command_preview = self._truncate_for_display(command, 100)
+
+        if description and description != 'Bash command':
+            return f"- **Bash**: {description}\n"
+        else:
+            return f"- **Bash**: `{command_preview}`\n"
     
     def _truncate_for_display(self, text: str, max_length: int) -> str:
         """Truncate text for display, handling newlines properly"""
