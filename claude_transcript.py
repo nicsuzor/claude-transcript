@@ -461,6 +461,11 @@ class SessionProcessor:
             if isinstance(turn, dict) and turn.get('type') == 'hook_context':
                 event_name = turn.get('hook_event_name')
                 exit_code = turn.get('exit_code')
+                content = turn.get('content', '').strip()
+
+                # Skip hook turns with no content
+                if not content:
+                    continue
 
                 # Build heading based on whether we have an event name
                 if event_name:
@@ -478,12 +483,7 @@ class SessionProcessor:
                     heading = "### Hook Context"
 
                 markdown += f"{heading}\n\n"
-
-                # Show content if present
-                content = turn.get('content', '').strip()
-                if content:
-                    markdown += f"{content}\n\n"
-
+                markdown += f"{content}\n\n"
                 markdown += "---\n\n"
                 continue
 
