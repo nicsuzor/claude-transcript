@@ -128,10 +128,10 @@ def test_extract_sidechain_formats_full_conversation():
     assert 'Now I will update the database setting.' in result
     assert 'Configuration updated successfully.' in result
 
-    # Check for tool operations formatted with dashes
-    assert '- **Read**:' in result
-    assert '`/home/user/config.yaml`' in result
-    assert '- **Edit**:' in result
+    # Check for tool operations formatted with Python-like syntax
+    assert '- Read(' in result
+    assert 'file_path=' in result
+    assert '- Edit(' in result
 
     # Verify chronological ordering (first text should appear before second)
     text1_pos = result.find('I will read the configuration file')
@@ -315,10 +315,10 @@ def test_transcript_renders_full_agent_conversation():
     )
 
     # 4. Should contain tool operations formatted with dashes
-    assert '- **Read**:' in markdown or '**Read**' in markdown, (
+    assert '- Read(' in markdown or 'Read(' in markdown, (
         "Expected tool operation formatting with Read tool"
     )
-    assert '`/home/user/config.yaml`' in markdown, (
+    assert 'file_path=' in markdown or '/home/user/config.yaml' in markdown, (
         "Expected file path from Read tool operation"
     )
 
