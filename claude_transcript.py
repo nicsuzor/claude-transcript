@@ -305,9 +305,10 @@ class SessionProcessor:
 
     def group_entries_into_turns(self, entries: List[Entry], agent_entries: Optional[Dict[str, List[Entry]]] = None) -> List[ConversationTurn]:
         """Group JSONL entries into conversational turns, correlating sidechains with main thread"""
-        # First, separate main thread from sidechains and filter out meta entries
+        # First, separate main thread from sidechains
         # Include system_reminder (hook context) and summary messages in main flow
-        main_entries = [e for e in entries if not e.is_sidechain and not e.is_meta]
+        # Keep isMeta entries - they're part of conversation (e.g., user-memory-input)
+        main_entries = [e for e in entries if not e.is_sidechain]
         sidechain_entries = [e for e in entries if e.is_sidechain]
         
         # Group sidechain entries by their conversation thread
