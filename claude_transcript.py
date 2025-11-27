@@ -499,8 +499,6 @@ class SessionProcessor:
             files_str = "None"
         markdown += f"**Files Modified**: {files_str}  \n\n"
 
-        markdown += "---\n\n"
-
         # Group entries into conversational turns (hook context now woven in chronologically)
         turns = self.group_entries_into_turns(entries, agent_entries)
         
@@ -532,7 +530,6 @@ class SessionProcessor:
 
                 markdown += f"{heading}\n\n"
                 markdown += f"{content}\n\n"
-                markdown += "---\n\n"
                 continue
 
             # Handle summary messages
@@ -541,13 +538,11 @@ class SessionProcessor:
                 subagent_id = turn.get('subagent_id')
 
                 if content:
-                    markdown += "---\n\n"
                     markdown += "**Summary"
                     if subagent_id:
                         markdown += f" (Subagent: {subagent_id})"
                     markdown += "**\n\n"
                     markdown += f"{content}\n\n"
-                    markdown += "---\n\n"
                 continue
 
             # Format turn header (simple)
@@ -639,9 +634,7 @@ class SessionProcessor:
                             indented_lines = [f"  {line}" if line.strip() else ""
                                             for line in item['sidechain_summary'].split('\n')]
                             markdown += '\n'.join(indented_lines) + '\n'
-            
-            markdown += "---\n\n"
-        
+
         return markdown
     
     # Helper methods (extracted from SessionProcessor)
