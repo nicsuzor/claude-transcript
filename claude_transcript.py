@@ -51,6 +51,8 @@ class Entry:
         self.additional_context = None
         self.hook_event_name = None
         self.hook_exit_code = None
+        self.skills_matched = None
+        self.files_loaded = None
         if self.type == 'system_reminder':
             # Try hookSpecificOutput first (real session format)
             hook_output = data.get('hookSpecificOutput', {})
@@ -58,6 +60,8 @@ class Entry:
                 self.additional_context = hook_output.get('additionalContext', '')
                 self.hook_event_name = hook_output.get('hookEventName')
                 self.hook_exit_code = hook_output.get('exitCode')
+                self.skills_matched = hook_output.get('skillsMatched')
+                self.files_loaded = hook_output.get('filesLoaded')
             # Fall back to content.additionalContext (test format)
             if not self.additional_context and isinstance(self.content, dict):
                 self.additional_context = self.content.get('additionalContext', '')
@@ -350,6 +354,8 @@ class SessionProcessor:
                     'hook_event_name': entry.hook_event_name,
                     'content': entry.additional_context or '',
                     'exit_code': entry.hook_exit_code,
+                    'skills_matched': entry.skills_matched,
+                    'files_loaded': entry.files_loaded,
                     'start_time': entry.timestamp,
                     'end_time': entry.timestamp
                 }
@@ -508,9 +514,11 @@ class SessionProcessor:
                 event_name = turn.get('hook_event_name')
                 exit_code = turn.get('exit_code')
                 content = turn.get('content', '').strip()
+                skills_matched = turn.get('skills_matched')
+                files_loaded = turn.get('files_loaded')
 
-                # Skip hook turns with no content
-                if not content:
+                # Skip hook turns with no content and no metadata
+                if not content and not skills_matched and not files_loaded:
                     continue
 
                 # Build heading based on whether we have an event name
@@ -529,7 +537,17 @@ class SessionProcessor:
                     heading = "### Hook Context"
 
                 markdown += f"{heading}\n\n"
-                markdown += f"{content}\n\n"
+
+                # Show metadata if present
+                if skills_matched:
+                    skills_str = ", ".join(f"`{s}`" for s in skills_matched)
+                    markdown += f"**Skills matched**: {skills_str}\n\n"
+                if files_loaded:
+                    files_str = ", ".join(f"`{f}`" for f in files_loaded)
+                    markdown += f"**Files loaded**: {files_str}\n\n"
+
+                if content:
+                    markdown += f"{content}\n\n"
                 continue
 
             # Handle summary messages
