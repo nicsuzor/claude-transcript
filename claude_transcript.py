@@ -762,7 +762,7 @@ class SessionProcessor:
         """Extract clean user content from entry"""
         message = entry.message or {}
         content = message.get('content', '')
-        
+
         if isinstance(content, list):
             text_parts = []
             for item in content:
@@ -773,15 +773,45 @@ class SessionProcessor:
                 else:
                     text_parts.append(str(item))
             content = '\n'.join(text_parts)
-        
+
         content = content.strip()
-        
+
         # Filter out pseudo-command recordings
         if self._is_pseudo_command(content):
             return ""
-        
+
+        # Condense isMeta skill/command expansions
+        if entry.is_meta and content:
+            return self._condense_skill_expansion(content)
+
         return content
     
+    def _condense_skill_expansion(self, content: str) -> str:
+        """Condense skill/command expansions to show file loaded without full text"""
+        # Check for skill expansion pattern
+        if content.startswith('Base directory for this skill:'):
+            # Extract path from first line
+            first_line = content.split('\n')[0]
+            if '/skills/' in first_line:
+                # Extract skill path
+                skill_path = first_line.split(':', 1)[1].strip()
+                skill_file = f"{skill_path}/SKILL.md"
+                line_count = len(content.split('\n'))
+                return f"<Expanded: {skill_file} ({line_count} lines)>"
+
+        # Check for slash command expansion (starts with ## or other markdown headers)
+        if content.startswith('##'):
+            lines = content.split('\n')
+            # Try to extract a title
+            title = lines[0].strip('# ').strip()
+            line_count = len(lines)
+            return f"<Expanded: /{title.lower().replace(' ', '-')} command ({line_count} lines)>"
+
+        # Default: show first 80 chars + line count
+        line_count = len(content.split('\n'))
+        preview = content[:80].replace('\n', ' ')
+        return f"<Expanded: {preview}... ({line_count} lines)>"
+
     def _is_pseudo_command(self, content: str) -> bool:
         """Check if content is a pseudo-command recording that should be filtered out"""
         if not content:
