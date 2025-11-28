@@ -981,6 +981,9 @@ class SessionProcessor:
 
         args = []
         for key, value in tool_input.items():
+            # Skip description (shown separately as narration)
+            if key == 'description':
+                continue
             # Skip very verbose parameters for certain tools
             if key in ('old_string', 'new_string', 'prompt', 'content') and isinstance(value, str) and len(value) > 100:
                 continue  # Skip these verbose params
@@ -1023,12 +1026,18 @@ class SessionProcessor:
         if tool_name == 'TodoWrite':
             return self._format_todowrite_operation(tool_input)
 
+        # Extract description for narration-first format
+        description = tool_input.get('description', '')
+
         # Compact Python-like syntax for most tools
         args = self._format_compact_args(tool_input, max_length=60)
-        if args:
-            return f"- {tool_name}({args})\n"
+        tool_call = f"{tool_name}({args})" if args else f"{tool_name}()"
+
+        # Put description first if present
+        if description:
+            return f"- {description}: {tool_call}\n"
         else:
-            return f"- {tool_name}()\n"
+            return f"- {tool_call}\n"
     
     def _format_todowrite_operation(self, tool_input: Dict[str, Any]) -> str:
         """Format TodoWrite operations in a compact checkbox format"""
