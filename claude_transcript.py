@@ -472,10 +472,14 @@ class SessionProcessor:
             turns.append(current_turn)
         
         # Add timing information to each turn
-        for i, turn in enumerate(turns):
+        first_user_turn_found = False
+        for turn in turns:
             if conversation_start_time and turn.get('start_time'):
-                if i == 0:
-                    # First turn shows actual local time
+                # Skip hook_context/summary for "first turn" designation
+                is_user_turn = turn.get('type') not in ('hook_context', 'summary')
+                if is_user_turn and not first_user_turn_found:
+                    # First user turn shows actual local time
+                    first_user_turn_found = True
                     turn['timing_info'] = TimingInfo(
                         is_first=True,
                         start_time_local=turn['start_time'],
@@ -595,15 +599,17 @@ class SessionProcessor:
             timing_info = turn.timing_info
             timing_str = ""
             if timing_info:
+                # Build timing with clear labels
+                parts = []
                 if timing_info.is_first and timing_info.start_time_local:
-                    local_time = timing_info.start_time_local.strftime('%I:%M:%S %p')
-                    timing_str = f" ({local_time}"
+                    local_time = timing_info.start_time_local.strftime('%I:%M %p')
+                    parts.append(local_time)
                 elif timing_info.offset_from_start:
-                    timing_str = f" (+{timing_info.offset_from_start}"
+                    parts.append(f"at +{timing_info.offset_from_start}")
                 if timing_info.duration:
-                    timing_str += f", {timing_info.duration})"
-                elif timing_str:
-                    timing_str += ")"
+                    parts.append(f"took {timing_info.duration}")
+                if parts:
+                    timing_str = f" ({', '.join(parts)})"
             markdown += f"## Turn {turn_number}{timing_str}\n\n"
 
             # User message
