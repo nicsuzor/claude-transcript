@@ -62,10 +62,12 @@ class Entry:
                 self.hook_exit_code = hook_output.get('exitCode')
                 self.skills_matched = hook_output.get('skillsMatched')
                 self.files_loaded = hook_output.get('filesLoaded')
-            # Fall back to content.additionalContext (test format)
+            # Fall back to content.additionalContext (test format) - only if not already set
             if not self.additional_context and isinstance(self.content, dict):
                 self.additional_context = self.content.get('additionalContext', '')
+            if not self.hook_event_name and isinstance(self.content, dict):
                 self.hook_event_name = self.content.get('hookEventName')
+            if self.hook_exit_code is None and isinstance(self.content, dict):
                 self.hook_exit_code = self.content.get('exitCode')
 
         # Parse timestamp
@@ -110,13 +112,15 @@ class ConversationTurn:
                  timing_info: Optional[TimingInfo] = None,
                  start_time: Optional[datetime] = None,
                  end_time: Optional[datetime] = None,
-                 hook_context: Optional[Dict[str, Any]] = None):
+                 hook_context: Optional[Dict[str, Any]] = None,
+                 inline_hooks: Optional[List[Dict[str, Any]]] = None):
         self.user_message = user_message
         self.assistant_sequence = assistant_sequence or []
         self.timing_info = timing_info
         self.start_time = start_time
         self.end_time = end_time
         self.hook_context = hook_context or {}
+        self.inline_hooks = inline_hooks or []
 
 
 class SessionProcessor:
@@ -284,13 +288,11 @@ class SessionProcessor:
                 data = json.loads(line)
 
                 # Create Entry for ALL hooks, not just ones with additionalContext
-                hook_output = data.get('hookSpecificOutput', {})
+                hook_output = data.get('hookSpecificOutput') or {}
 
-                # If no hookSpecificOutput, create minimal one with just event name
-                if not hook_output:
-                    hook_output = {
-                        'hookEventName': data.get('hook_event', 'Unknown')
-                    }
+                # Ensure hookEventName is set (fall back to top-level hook_event)
+                if not hook_output.get('hookEventName'):
+                    hook_output['hookEventName'] = data.get('hook_event', 'Unknown')
 
                 # Add exit_code to hookSpecificOutput if present at top level
                 if 'exit_code' in data and 'exitCode' not in hook_output:
@@ -359,11 +361,18 @@ class SessionProcessor:
                     'start_time': entry.timestamp,
                     'end_time': entry.timestamp
                 }
-                # Append current turn if exists, then add hook turn
-                if current_turn:
-                    turns.append(current_turn)
-                    current_turn = {}
-                turns.append(hook_turn)
+                # If we have a current turn with user message but no assistant response yet,
+                # add hook inline (don't break the turn)
+                if current_turn and current_turn.get('user_message') and not current_turn.get('assistant_sequence'):
+                    if 'inline_hooks' not in current_turn:
+                        current_turn['inline_hooks'] = []
+                    current_turn['inline_hooks'].append(hook_turn)
+                else:
+                    # No current turn or already has assistant response - add as separate turn
+                    if current_turn:
+                        turns.append(current_turn)
+                        current_turn = {}
+                    turns.append(hook_turn)
 
             elif entry.type == 'summary':
                 # Summary message - create a turn for it
@@ -481,7 +490,8 @@ class SessionProcessor:
                     timing_info=turn.get('timing_info'),
                     start_time=turn.get('start_time'),
                     end_time=turn.get('end_time'),
-                    hook_context=turn.get('hook_context', {})
+                    hook_context=turn.get('hook_context', {}),
+                    inline_hooks=turn.get('inline_hooks', [])
                 ))
 
         return conversation_turns
@@ -591,19 +601,37 @@ class SessionProcessor:
             if turn.user_message:
                 markdown += f"**User:** {turn.user_message}\n\n"
 
-                # Add inline hooks if present
+                # Add inline hooks from hook entries that fired after this user message
+                if turn.inline_hooks:
+                    for hook in turn.inline_hooks:
+                        event_name = hook.get('hook_event_name') or 'Hook'
+                        exit_code = hook.get('exit_code') if hook.get('exit_code') is not None else 0
+                        checkmark = "✓" if exit_code == 0 else f"✗ (exit {exit_code})"
+                        markdown += f"### Hook: {event_name} {checkmark}\n\n"
+
+                        # Show skills matched
+                        if hook.get('skills_matched'):
+                            skills_str = ", ".join(f"`{s}`" for s in hook['skills_matched'])
+                            markdown += f"**Skills matched**: {skills_str}\n\n"
+
+                        # Show files loaded (truncated)
+                        if hook.get('files_loaded'):
+                            for f in hook['files_loaded']:
+                                markdown += f"- Loaded `{f}` (content injected)\n"
+                            markdown += "\n"
+                        elif hook.get('content'):
+                            # Only show content if no files loaded
+                            markdown += f"{hook['content']}\n\n"
+
+                # Legacy hook_context (from entry itself, rarely used)
                 if turn.hook_context:
                     for hook_name, hook_data in turn.hook_context.items():
                         exit_code = hook_data.get('exit_code', 0)
                         content = hook_data.get('content', '')
-                        # Skip empty successful hooks (exit_code 0 with no content)
-                        # But keep error hooks even if empty
                         if exit_code == 0 and not content.strip():
                             continue
                         checkmark = "✓" if exit_code == 0 else "✗"
                         markdown += f"* {checkmark} {hook_name} hook: {content}\n"
-
-                if turn.hook_context:
                     markdown += "\n"
 
             # Assistant sequence (chronological text and tool operations)
