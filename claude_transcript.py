@@ -553,35 +553,28 @@ class SessionProcessor:
                 if not content and not skills_matched and not files_loaded:
                     continue
 
-                # Build heading based on whether we have an event name
-                if event_name:
-                    heading = "### Hook"
-                    # Show event name and exit status
-                    if exit_code is None:
-                        # Old hook logs without exit codes
-                        status = ""
-                    elif exit_code == 0:
-                        status = " ✓"
-                    else:
-                        status = f" ✗ (exit {exit_code})"
-                    heading += f": {event_name}{status}"
+                # Format hook like a tool call
+                if exit_code is None:
+                    status = ""
+                elif exit_code == 0:
+                    status = " ✓"
                 else:
-                    heading = "### Hook Context"
+                    status = f" ✗ (exit {exit_code})"
 
-                markdown += f"{heading}\n\n"
+                hook_name = event_name or "Hook"
+                markdown += f"- Hook({hook_name}){status}\n"
 
-                # Show metadata if present
+                # Show metadata as indented items
                 if skills_matched:
                     skills_str = ", ".join(f"`{s}`" for s in skills_matched)
-                    markdown += f"**Skills matched**: {skills_str}\n\n"
+                    markdown += f"  - Skills matched: {skills_str}\n"
                 if files_loaded:
-                    # Show files as loaded (content was injected), don't dump full content
                     for f in files_loaded:
-                        markdown += f"- Loaded `{f}` (content injected)\n"
-                    markdown += "\n"
+                        markdown += f"  - Loaded `{f}` (content injected)\n"
                 elif content:
-                    # Only show content if no files were loaded (e.g., short hook messages)
-                    markdown += f"{content}\n\n"
+                    # Show short content inline
+                    markdown += f"  - {content[:200]}\n"
+                markdown += "\n"
                 continue
 
             # Handle summary messages
@@ -636,31 +629,30 @@ class SessionProcessor:
                             skipped_hooks[key] = skipped_hooks.get(key, 0) + 1
                             continue
 
-                        checkmark = "✓" if exit_code == 0 else f"✗ (exit {exit_code})"
+                        checkmark = " ✓" if exit_code == 0 else f" ✗ (exit {exit_code})"
 
-                        # Add context to hook name
+                        # Format hook name with context
                         tool_name = hook.get('tool_name')
                         agent_id = hook.get('agent_id')
                         if tool_name:
-                            markdown += f"### Hook: {event_name} ({tool_name}) {checkmark}\n\n"
+                            hook_label = f"{event_name}, {tool_name}"
                         elif agent_id:
-                            markdown += f"### Hook: {event_name} ({agent_id}) {checkmark}\n\n"
+                            hook_label = f"{event_name}, {agent_id}"
                         else:
-                            markdown += f"### Hook: {event_name} {checkmark}\n\n"
+                            hook_label = event_name
 
-                        # Show skills matched
+                        markdown += f"- Hook({hook_label}){checkmark}\n"
+
+                        # Show metadata as indented items
                         if skills_matched:
                             skills_str = ", ".join(f"`{s}`" for s in skills_matched)
-                            markdown += f"**Skills matched**: {skills_str}\n\n"
-
-                        # Show files loaded (truncated)
+                            markdown += f"  - Skills matched: {skills_str}\n"
                         if files_loaded:
                             for f in files_loaded:
-                                markdown += f"- Loaded `{f}` (content injected)\n"
-                            markdown += "\n"
+                                markdown += f"  - Loaded `{f}` (content injected)\n"
                         elif content:
-                            # Only show content if no files loaded
-                            markdown += f"{content}\n\n"
+                            markdown += f"  - {content[:200]}\n"
+                        markdown += "\n"
 
                 # Legacy hook_context (from entry itself, rarely used)
                 if turn.hook_context:
