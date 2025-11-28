@@ -543,10 +543,12 @@ class SessionProcessor:
                     skills_str = ", ".join(f"`{s}`" for s in skills_matched)
                     markdown += f"**Skills matched**: {skills_str}\n\n"
                 if files_loaded:
-                    files_str = ", ".join(f"`{f}`" for f in files_loaded)
-                    markdown += f"**Files loaded**: {files_str}\n\n"
-
-                if content:
+                    # Show files as loaded (content was injected), don't dump full content
+                    for f in files_loaded:
+                        markdown += f"- Loaded `{f}` (content injected)\n"
+                    markdown += "\n"
+                elif content:
+                    # Only show content if no files were loaded (e.g., short hook messages)
                     markdown += f"{content}\n\n"
                 continue
 
