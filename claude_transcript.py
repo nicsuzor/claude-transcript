@@ -432,10 +432,16 @@ class SessionProcessor:
                                     'type': 'tool',
                                     'content': tool_op
                                 }
-                                
-                                # Check if this tool use has an associated sidechain
+
                                 tool_id = block.get('id')
                                 tool_name = block.get('name', '')
+
+                                # Check if tool failed and capture error
+                                error_result = self._get_tool_error(tool_id, entries)
+                                if error_result:
+                                    tool_item['error'] = error_result
+
+                                # Check if this tool use has an associated sidechain
                                 if tool_name == 'Task' and tool_id:
                                     # First try: explicit agentId from tool result
                                     agent_id = self._extract_agent_id_from_result(tool_id, entries)
@@ -446,7 +452,7 @@ class SessionProcessor:
                                         related_sidechain = self._find_related_sidechain(entry, sidechain_groups)
                                         if related_sidechain:
                                             tool_item['sidechain_summary'] = self._summarize_sidechain(related_sidechain)
-                                
+
                                 current_turn['assistant_sequence'].append(tool_item)
                     else:
                         text_content = str(block).strip()
@@ -591,29 +597,22 @@ class SessionProcessor:
                     markdown += f"{content}\n\n"
                 continue
 
-            # Format turn header (simple)
+            # Format turn header with timing inline
             turn_number += 1
             timing_info = turn.timing_info
-            turn_header = f"## Turn {turn_number} "
-            markdown += f"{turn_header}\n\n"
-            
-            # Add timing information underneath as plain text
+            timing_str = ""
             if timing_info:
-                timing_lines = []
                 if timing_info.is_first and timing_info.start_time_local:
-                    # First turn shows local time
                     local_time = timing_info.start_time_local.strftime('%I:%M:%S %p')
-                    timing_lines.append(f"Started: {local_time}")
+                    timing_str = f" ({local_time}"
                 elif timing_info.offset_from_start:
-                    # Subsequent turns show offset from start
-                    timing_lines.append(f"Offset: +{timing_info.offset_from_start}")
-                
+                    timing_str = f" (+{timing_info.offset_from_start}"
                 if timing_info.duration:
-                    timing_lines.append(f"Duration: {timing_info.duration}")
-                
-                if timing_lines:
-                    markdown += "\n".join(f"* {line}" for line in timing_lines) + "\n\n"
-            
+                    timing_str += f", {timing_info.duration})"
+                elif timing_str:
+                    timing_str += ")"
+            markdown += f"## Turn {turn_number}{timing_str}\n\n"
+
             # User message
             if turn.user_message:
                 markdown += f"**User:** {turn.user_message}\n\n"
@@ -691,18 +690,17 @@ class SessionProcessor:
                             in_actions_section = False
                             markdown += "\n"
 
-                        # Format agent header with subagent ID if present
+                        # Format agent response as blockquote
                         if subagent_id:
                             agent_header = f"**Agent ({subagent_id}):**"
                         else:
                             agent_header = "**Agent:**"
 
-                        if not in_assistant_response:
-                            markdown += f"{agent_header} {content}\n\n"
-                            in_assistant_response = True
-                        else:
-                            markdown += f"{agent_header} {content}\n\n"
-                            in_assistant_response = True
+                        # Blockquote the content (prefix each line with >)
+                        quoted_lines = [f"> {line}" if line.strip() else ">" for line in content.split('\n')]
+                        quoted_content = '\n'.join(quoted_lines)
+                        markdown += f"{agent_header}\n\n{quoted_content}\n\n"
+                        in_assistant_response = True
 
                     elif item_type == 'tool':
                         # Close assistant response section if we were in one
@@ -714,7 +712,11 @@ class SessionProcessor:
                             in_actions_section = True
 
                         markdown += content
-                        
+
+                        # Show error if tool failed
+                        if item.get('error'):
+                            markdown += f"\n  **❌ ERROR:** `{item['error']}`\n"
+
                         # Add sidechain details if present
                         if item.get('sidechain_summary'):
                             markdown += f"\n**Agent Conversation:**\n\n"
@@ -844,6 +846,35 @@ class SessionProcessor:
                         if isinstance(entry.tool_use_result, dict):
                             return entry.tool_use_result.get('agentId')
 
+        return None
+
+    def _get_tool_error(self, tool_id: str, all_entries: List[Entry]) -> Optional[str]:
+        """Get error message if tool failed"""
+        for entry in all_entries:
+            if entry.type != 'user':
+                continue
+
+            message = entry.message or {}
+            content = message.get('content', [])
+            if not isinstance(content, list):
+                continue
+
+            for block in content:
+                if isinstance(block, dict):
+                    if (block.get('type') == 'tool_result' and
+                        block.get('tool_use_id') == tool_id and
+                        block.get('is_error')):
+                        # Extract error content
+                        result_content = block.get('content', '')
+                        if isinstance(result_content, list):
+                            # Content is list of blocks
+                            texts = []
+                            for item in result_content:
+                                if isinstance(item, dict) and item.get('type') == 'text':
+                                    texts.append(item.get('text', ''))
+                            return '\n'.join(texts)[:500]  # Truncate long errors
+                        elif isinstance(result_content, str):
+                            return result_content[:500]
         return None
 
     def _extract_user_content(self, entry: Entry) -> str:
