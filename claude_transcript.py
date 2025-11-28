@@ -512,22 +512,27 @@ class SessionProcessor:
         session_uuid = session.uuid
         details = session.details or {}
 
-        # Header
-        markdown = f"# Session Transcript: {session.summary}\n\n"
-        markdown += f"**Session ID**: `{session_uuid}`  \n"
-        markdown += f"**Created**: {details.get('created_at', session.created_at or 'Unknown')}  \n"
-        markdown += f"**Type**: {session.artifact_type}  \n"
+        # Header (hooks summary added after processing turns)
+        header = f"# Session Transcript: {session.summary}\n\n"
+        header += f"**Session ID**: `{session_uuid}`  \n"
+        header += f"**Created**: {details.get('created_at', session.created_at or 'Unknown')}  \n"
+        header += f"**Type**: {session.artifact_type}  \n"
 
         edited_files = details.get('edited_files', session.edited_files)
         if edited_files and isinstance(edited_files, list):
             files_str = ', '.join(edited_files)
         else:
             files_str = "None"
-        markdown += f"**Files Modified**: {files_str}  \n\n"
+        header += f"**Files Modified**: {files_str}  \n"
 
         # Group entries into conversational turns (hook context now woven in chronologically)
         turns = self.group_entries_into_turns(entries, agent_entries)
-        
+
+        # Track skipped hooks for metadata summary
+        skipped_hooks = {}  # event_name -> count
+
+        # Body markdown built from turns
+        markdown = ""
         turn_number = 0  # Track actual conversation turns separately
         for i, turn in enumerate(turns):
             # Handle hook context turns specially
@@ -589,8 +594,8 @@ class SessionProcessor:
             # Format turn header (simple)
             turn_number += 1
             timing_info = turn.timing_info
-            header = f"## Turn {turn_number} "
-            markdown += f"{header}\n\n"
+            turn_header = f"## Turn {turn_number} "
+            markdown += f"{turn_header}\n\n"
             
             # Add timing information underneath as plain text
             if timing_info:
@@ -618,6 +623,20 @@ class SessionProcessor:
                     for hook in turn.inline_hooks:
                         event_name = hook.get('hook_event_name') or 'Hook'
                         exit_code = hook.get('exit_code') if hook.get('exit_code') is not None else 0
+                        content = hook.get('content', '').strip()
+                        skills_matched = hook.get('skills_matched')
+                        files_loaded = hook.get('files_loaded')
+
+                        # Skip successful hooks with no useful content
+                        has_useful_content = content or skills_matched or files_loaded
+                        is_error = exit_code is not None and exit_code != 0
+                        if not has_useful_content and not is_error:
+                            # Track skipped hook
+                            tool_name = hook.get('tool_name')
+                            key = f"{event_name} ({tool_name})" if tool_name else event_name
+                            skipped_hooks[key] = skipped_hooks.get(key, 0) + 1
+                            continue
+
                         checkmark = "✓" if exit_code == 0 else f"✗ (exit {exit_code})"
 
                         # Add context to hook name
@@ -631,18 +650,18 @@ class SessionProcessor:
                             markdown += f"### Hook: {event_name} {checkmark}\n\n"
 
                         # Show skills matched
-                        if hook.get('skills_matched'):
-                            skills_str = ", ".join(f"`{s}`" for s in hook['skills_matched'])
+                        if skills_matched:
+                            skills_str = ", ".join(f"`{s}`" for s in skills_matched)
                             markdown += f"**Skills matched**: {skills_str}\n\n"
 
                         # Show files loaded (truncated)
-                        if hook.get('files_loaded'):
-                            for f in hook['files_loaded']:
+                        if files_loaded:
+                            for f in files_loaded:
                                 markdown += f"- Loaded `{f}` (content injected)\n"
                             markdown += "\n"
-                        elif hook.get('content'):
+                        elif content:
                             # Only show content if no files loaded
-                            markdown += f"{hook['content']}\n\n"
+                            markdown += f"{content}\n\n"
 
                 # Legacy hook_context (from entry itself, rarely used)
                 if turn.hook_context:
@@ -672,17 +691,17 @@ class SessionProcessor:
                             in_actions_section = False
                             markdown += "\n"
 
-                        # Format header with subagent ID if present
+                        # Format agent header with subagent ID if present
                         if subagent_id:
-                            header = f"**Agent ({subagent_id}):**"
+                            agent_header = f"**Agent ({subagent_id}):**"
                         else:
-                            header = "**Agent:**"
+                            agent_header = "**Agent:**"
 
                         if not in_assistant_response:
-                            markdown += f"{header} {content}\n\n"
+                            markdown += f"{agent_header} {content}\n\n"
                             in_assistant_response = True
                         else:
-                            markdown += f"{header} {content}\n\n"
+                            markdown += f"{agent_header} {content}\n\n"
                             in_assistant_response = True
 
                     elif item_type == 'tool':
@@ -704,7 +723,14 @@ class SessionProcessor:
                                             for line in item['sidechain_summary'].split('\n')]
                             markdown += '\n'.join(indented_lines) + '\n'
 
-        return markdown
+        # Add skipped hooks summary to header if any
+        if skipped_hooks:
+            header += f"**Hooks fired** (no output): "
+            hooks_list = [f"{k}: {v}" for k, v in sorted(skipped_hooks.items())]
+            header += ", ".join(hooks_list) + "  \n"
+        header += "\n"
+
+        return header + markdown
     
     # Helper methods (extracted from SessionProcessor)
     def _group_sidechain_entries(self, sidechain_entries: List[Entry]) -> Dict[datetime, List[Entry]]:
