@@ -53,6 +53,8 @@ class Entry:
         self.hook_exit_code = None
         self.skills_matched = None
         self.files_loaded = None
+        self.tool_name = None
+        self.agent_id = None
         if self.type == 'system_reminder':
             # Try hookSpecificOutput first (real session format)
             hook_output = data.get('hookSpecificOutput', {})
@@ -62,6 +64,8 @@ class Entry:
                 self.hook_exit_code = hook_output.get('exitCode')
                 self.skills_matched = hook_output.get('skillsMatched')
                 self.files_loaded = hook_output.get('filesLoaded')
+                self.tool_name = hook_output.get('toolName')
+                self.agent_id = hook_output.get('agentId')
             # Fall back to content.additionalContext (test format) - only if not already set
             if not self.additional_context and isinstance(self.content, dict):
                 self.additional_context = self.content.get('additionalContext', '')
@@ -298,6 +302,14 @@ class SessionProcessor:
                 if 'exit_code' in data and 'exitCode' not in hook_output:
                     hook_output['exitCode'] = data['exit_code']
 
+                # Add tool_name for PreToolUse/PostToolUse hooks
+                if 'tool_name' in data:
+                    hook_output['toolName'] = data['tool_name']
+
+                # Add agent_id for SubagentStop hooks
+                if 'agent_id' in data:
+                    hook_output['agentId'] = data['agent_id']
+
                 # Convert to Entry format
                 entry_data = {
                     'type': 'system_reminder',
@@ -358,18 +370,16 @@ class SessionProcessor:
                     'exit_code': entry.hook_exit_code,
                     'skills_matched': entry.skills_matched,
                     'files_loaded': entry.files_loaded,
+                    'tool_name': entry.tool_name,
+                    'agent_id': entry.agent_id,
                     'start_time': entry.timestamp,
                     'end_time': entry.timestamp
                 }
                 # If we have a current turn with user message, add hook inline (don't break turn)
                 if current_turn and current_turn.get('user_message'):
-                    # Only add UserPromptSubmit/PromptRouter hooks inline (skip tool hooks)
-                    event_name = entry.hook_event_name or ''
-                    if event_name in ('UserPromptSubmit', 'PromptRouter', 'SessionStart'):
-                        if 'inline_hooks' not in current_turn:
-                            current_turn['inline_hooks'] = []
-                        current_turn['inline_hooks'].append(hook_turn)
-                    # Skip other hooks (PreToolUse, PostToolUse, SubagentStop) - too noisy
+                    if 'inline_hooks' not in current_turn:
+                        current_turn['inline_hooks'] = []
+                    current_turn['inline_hooks'].append(hook_turn)
                 else:
                     # No current turn - add as standalone (e.g., SessionStart before first message)
                     turns.append(hook_turn)
@@ -609,7 +619,16 @@ class SessionProcessor:
                         event_name = hook.get('hook_event_name') or 'Hook'
                         exit_code = hook.get('exit_code') if hook.get('exit_code') is not None else 0
                         checkmark = "✓" if exit_code == 0 else f"✗ (exit {exit_code})"
-                        markdown += f"### Hook: {event_name} {checkmark}\n\n"
+
+                        # Add context to hook name
+                        tool_name = hook.get('tool_name')
+                        agent_id = hook.get('agent_id')
+                        if tool_name:
+                            markdown += f"### Hook: {event_name} ({tool_name}) {checkmark}\n\n"
+                        elif agent_id:
+                            markdown += f"### Hook: {event_name} ({agent_id}) {checkmark}\n\n"
+                        else:
+                            markdown += f"### Hook: {event_name} {checkmark}\n\n"
 
                         # Show skills matched
                         if hook.get('skills_matched'):
