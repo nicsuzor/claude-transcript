@@ -361,17 +361,17 @@ class SessionProcessor:
                     'start_time': entry.timestamp,
                     'end_time': entry.timestamp
                 }
-                # If we have a current turn with user message but no assistant response yet,
-                # add hook inline (don't break the turn)
-                if current_turn and current_turn.get('user_message') and not current_turn.get('assistant_sequence'):
-                    if 'inline_hooks' not in current_turn:
-                        current_turn['inline_hooks'] = []
-                    current_turn['inline_hooks'].append(hook_turn)
+                # If we have a current turn with user message, add hook inline (don't break turn)
+                if current_turn and current_turn.get('user_message'):
+                    # Only add UserPromptSubmit/PromptRouter hooks inline (skip tool hooks)
+                    event_name = entry.hook_event_name or ''
+                    if event_name in ('UserPromptSubmit', 'PromptRouter', 'SessionStart'):
+                        if 'inline_hooks' not in current_turn:
+                            current_turn['inline_hooks'] = []
+                        current_turn['inline_hooks'].append(hook_turn)
+                    # Skip other hooks (PreToolUse, PostToolUse, SubagentStop) - too noisy
                 else:
-                    # No current turn or already has assistant response - add as separate turn
-                    if current_turn:
-                        turns.append(current_turn)
-                        current_turn = {}
+                    # No current turn - add as standalone (e.g., SessionStart before first message)
                     turns.append(hook_turn)
 
             elif entry.type == 'summary':
@@ -518,6 +518,7 @@ class SessionProcessor:
         # Group entries into conversational turns (hook context now woven in chronologically)
         turns = self.group_entries_into_turns(entries, agent_entries)
         
+        turn_number = 0  # Track actual conversation turns separately
         for i, turn in enumerate(turns):
             # Handle hook context turns specially
             if isinstance(turn, dict) and turn.get('type') == 'hook_context':
@@ -576,8 +577,9 @@ class SessionProcessor:
                 continue
 
             # Format turn header (simple)
+            turn_number += 1
             timing_info = turn.timing_info
-            header = f"## Turn {i + 1} "
+            header = f"## Turn {turn_number} "
             markdown += f"{header}\n\n"
             
             # Add timing information underneath as plain text
