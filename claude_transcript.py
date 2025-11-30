@@ -709,11 +709,13 @@ class SessionProcessor:
                         if not in_actions_section:
                             in_actions_section = True
 
-                        markdown += content
-
-                        # Show error if tool failed
+                        # Show error inline if tool failed
                         if item.get('error'):
-                            markdown += f"\n  **❌ ERROR:** `{item['error']}`\n"
+                            # content already ends with \n, so strip it and append error inline
+                            content = content.rstrip('\n')
+                            markdown += f"- **❌ ERROR:** {content.lstrip('- ')}: `{item['error']}`\n"
+                        else:
+                            markdown += content
 
                         # Add sidechain details if present
                         if item.get('sidechain_summary'):
